@@ -20,6 +20,18 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Secrets) sabit kod yerine daha güvenli olur.
 UPLOAD_PASSWORD = st.secrets.get("upload_password", "ik2026") if hasattr(st, "secrets") else "ik2026"
 
+# KPI kartlarındaki sayıların fontunu küçültmek için özel CSS
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] {
+    font-size: 1.3rem;
+}
+[data-testid="stMetricDelta"] {
+    font-size: 0.85rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
 COMPANIES = [
     'Aralık Sigorta',
     'Ekim Turizm',
@@ -313,7 +325,7 @@ def main():
     cur = month_data['toplamCalisan']
     prev = prev_data['toplamCalisan'] if prev_data else None
     diff = calc_diff(cur, prev)
-    col1.metric("👥 Çalışan", format_number(cur, 0), delta=format_delta_number(diff, 0))
+    col1.metric("👥 Çalışan Sayısı", format_number(cur, 0), delta=format_delta_number(diff, 0))
 
     # 2. Genel Raporlu Oran
     cur = month_data['genelRaporOran']
