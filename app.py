@@ -5,7 +5,6 @@ import plotly.graph_objects as go
 
 st.set_page_config(layout="wide", page_title="İK Dashboard")
 
-# Şirket listesi (Excel'deki sırayla)
 COMPANIES = [
     'Aralık Sigorta',
     'Ekim Turizm',
@@ -17,12 +16,9 @@ COMPANIES = [
 MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz']
 
 def normalize_company_name(name):
-    """Şirket isimlerini standartlaştır (büyük/küçük harf ve boşlukları temizle)"""
     if not isinstance(name, str):
         return name
-    # Excel'de "EKIM TURIZM" veya "Ekim Turizm" olabilir, hepsini düzelt
     name = name.strip()
-    # Özel düzeltmeler
     replacements = {
         'EKIM TURIZM': 'Ekim Turizm',
         'HAZIRAN': 'Haziran Servis',
@@ -31,12 +27,10 @@ def normalize_company_name(name):
     return replacements.get(name, name)
 
 def clean_columns(df):
-    """Sütun isimlerindeki boşlukları temizle ve ilk satırdaki gereksiz başlıkları düzelt"""
     df.columns = [str(col).strip() for col in df.columns]
     return df
 
 def get_month_cols(df):
-    """DataFrame'deki ay sütunlarını (MONTHS ile eşleşen) döndürür."""
     month_cols = []
     for col in df.columns:
         col_clean = str(col).strip()
@@ -48,31 +42,29 @@ def get_month_cols(df):
 
 def load_data(uploaded_file):
     # ----- 1. GENEL TURNOVER -----
-    df_gt = pd.read_excel(uploaded_file, sheet_name='genel.turnover', header=0)  # ilk satır başlık
+    df_gt = pd.read_excel(uploaded_file, sheet_name='genel.turnover', header=0)
     df_gt = clean_columns(df_gt)
-    # İlk sütun şirket isimleri, son sütun toplam, ayları al
+    # Şirket isimleri ilk sütunda
+    df_gt['Şirket'] = df_gt.iloc[:, 0].apply(normalize_company_name)
+    df_gt = df_gt.set_index('Şirket')
     month_cols = get_month_cols(df_gt)
     if not month_cols:
         raise ValueError("genel.turnover sayfasında ay sütunları bulunamadı.")
-    # Şirket isimlerini normalize et
-    df_gt['Şirket'] = df_gt.iloc[:, 0].apply(normalize_company_name)
-    df_gt = df_gt.set_index('Şirket')
     df_gt = df_gt[month_cols]
 
     # ----- 2. GÖNÜLLÜ TURNOVER -----
     df_gon = pd.read_excel(uploaded_file, sheet_name='gonullu.turnover', header=0)
     df_gon = clean_columns(df_gon)
+    df_gon['Şirket'] = df_gon.iloc[:, 0].apply(normalize_company_name)
+    df_gon = df_gon.set_index('Şirket')
     month_cols = get_month_cols(df_gon)
     if not month_cols:
         raise ValueError("gonullu.turnover sayfasında ay sütunları bulunamadı.")
-    df_gon['Şirket'] = df_gon.iloc[:, 0].apply(normalize_company_name)
-    df_gon = df_gon.set_index('Şirket')
     df_gon = df_gon[month_cols]
 
-    # ----- 3. RAPOR ORANI (devamsızlık) -----
-    df_rapor = pd.read_excel(uploaded_file, sheet_name='rapor_oran', header=0)  # ilk satır "rapor.oran", ikinci satır aylar
+    # ----- 3. RAPOR ORANI -----
+    df_rapor = pd.read_excel(uploaded_file, sheet_name='rapor_oran', header=0)
     df_rapor = clean_columns(df_rapor)
-    # İlk sütun şirket isimleri
     df_rapor['Şirket'] = df_rapor.iloc[:, 0].apply(normalize_company_name)
     df_rapor = df_rapor.set_index('Şirket')
     month_cols = get_month_cols(df_rapor)
@@ -81,10 +73,13 @@ def load_data(uploaded_file):
     df_rapor = df_rapor[month_cols]
 
     # ----- 4. ÇALIŞAN SAYISI -----
-    df_calisan = pd.read_excel(uploaded_file, sheet_name='calisan.sayisi', header=0)  # ilk satırda "Pers.Say" başlığı var mı? Dosyada B1:H1 boş, A2 "Pers.Say", B2:H2 aylar. O yüzden header=0 ile ilk satırı sütun ismi yapıp sonra düzeltelim.
+    df_calisan = pd.read_excel(uploaded_file, sheet_name='calisan.sayisi', header=0)
     df_calisan = clean_columns(df_calisan)
-    # İlk sütun şirket isimleri
-    df_calisan['Şirket'] = df_calisan.iloc[:, 0].apply(normalize_company_name)
+    # İlk sütun şirket isimleri, ancak ilk satırda "Pers.Say" olabilir, onu atla
+    # Şirket isimlerini bulmak için ilk sütunu al
+    first_col = df_calisan.iloc[:, 0]
+    # Şirket isimlerini normalize et
+    df_calisan['Şirket'] = first_col.apply(normalize_company_name)
     df_calisan = df_calisan.set_index('Şirket')
     month_cols = get_month_cols(df_calisan)
     if not month_cols:
@@ -151,27 +146,44 @@ def load_data(uploaded_file):
         raise ValueError("izin_ucret sayfasında ay sütunları bulunamadı.")
     df_izin_ucret = df_izin_ucret[month_cols]
 
-    # ----- TOPLAM SATIRLARI (son satırlar) -----
-    # rapor_oran - "Aylık Genel Rapor Oranı" satırı (dosyada 8. satır, indeks 7)
-    df_rapor_son = pd.read_excel(uploaded_file, sheet_name='rapor_oran', skiprows=7, header=None, nrows=1)
-    genel_rapor = df_rapor_son.iloc[0, 1:8].values  # ilk sütun boş
+    # ----- TOPLAM SATIRLARI (SON SATIRLARI OTOMATİK BUL) -----
+    # rapor_oran: "Aylık Genel Rapor Oranı" satırını bul
+    df_rapor_full = pd.read_excel(uploaded_file, sheet_name='rapor_oran', header=None)
+    # İlk sütunda "Aylık Genel Rapor Oranı" olan satırı bul
+    rapor_idx = df_rapor_full[df_rapor_full[0].astype(str).str.contains('Aylık Genel Rapor Oranı', case=False, na=False)].index
+    if len(rapor_idx) == 0:
+        # Eğer bulunamazsa son satırı al
+        genel_rapor = df_rapor_full.iloc[-1, 1:8].values
+    else:
+        genel_rapor = df_rapor_full.iloc[rapor_idx[0], 1:8].values
 
-    # calisan.sayisi - "TOPLAM ÇALIŞAN SAYISI" satırı (dosyada 9. satır, indeks 8)
-    df_calisan_son = pd.read_excel(uploaded_file, sheet_name='calisan.sayisi', skiprows=8, header=None, nrows=1)
-    toplam_calisan = df_calisan_son.iloc[0, 1:8].values
+    # calisan.sayisi: "TOPLAM ÇALIŞAN SAYISI" satırını bul
+    df_calisan_full = pd.read_excel(uploaded_file, sheet_name='calisan.sayisi', header=None)
+    calisan_idx = df_calisan_full[df_calisan_full[0].astype(str).str.contains('TOPLAM ÇALIŞAN SAYISI', case=False, na=False)].index
+    if len(calisan_idx) == 0:
+        toplam_calisan = df_calisan_full.iloc[-1, 1:8].values
+    else:
+        toplam_calisan = df_calisan_full.iloc[calisan_idx[0], 1:8].values
 
-    # izin_gun - "TOPLAM_GUN" satırı (dosyada 8. satır, indeks 7)
-    df_izin_gun_son = pd.read_excel(uploaded_file, sheet_name='izin_gun', skiprows=7, header=None, nrows=1)
-    toplam_izin_gun = df_izin_gun_son.iloc[0, 1:8].values
+    # izin_gun: "TOPLAM_GUN" satırını bul
+    df_izin_gun_full = pd.read_excel(uploaded_file, sheet_name='izin_gun', header=None)
+    izin_gun_idx = df_izin_gun_full[df_izin_gun_full[0].astype(str).str.contains('TOPLAM_GUN', case=False, na=False)].index
+    if len(izin_gun_idx) == 0:
+        toplam_izin_gun = df_izin_gun_full.iloc[-1, 1:8].values
+    else:
+        toplam_izin_gun = df_izin_gun_full.iloc[izin_gun_idx[0], 1:8].values
 
-    # izin_ucret - "TOPLAM" satırı (dosyada 8. satır, indeks 7)
-    df_izin_ucret_son = pd.read_excel(uploaded_file, sheet_name='izin_ucret', skiprows=7, header=None, nrows=1)
-    toplam_izin_ucret = df_izin_ucret_son.iloc[0, 1:8].values
+    # izin_ucret: "TOPLAM" satırını bul
+    df_izin_ucret_full = pd.read_excel(uploaded_file, sheet_name='izin_ucret', header=None)
+    izin_ucret_idx = df_izin_ucret_full[df_izin_ucret_full[0].astype(str).str.contains('TOPLAM', case=False, na=False)].index
+    if len(izin_ucret_idx) == 0:
+        toplam_izin_ucret = df_izin_ucret_full.iloc[-1, 1:8].values
+    else:
+        toplam_izin_ucret = df_izin_ucret_full.iloc[izin_ucret_idx[0], 1:8].values
 
     # ----- TÜM VERİLERİ BİR SÖZLÜKTE TOPLA -----
     data = {}
     for idx, m in enumerate(MONTHS):
-        # Her şirket için verileri topla
         employees = []
         devamsizlik = []
         turnover_toplam = []
@@ -184,10 +196,9 @@ def load_data(uploaded_file):
         izin_ucret = []
 
         for comp in COMPANIES:
-            # Şirket indeksini kontrol et
             if comp in df_calisan.index:
                 employees.append(df_calisan.loc[comp, m])
-                devamsizlik.append(df_rapor.loc[comp, m] * 100)  # yüzde
+                devamsizlik.append(df_rapor.loc[comp, m] * 100)
                 turnover_toplam.append(df_gt.loc[comp, m] * 100)
                 turnover_gonullu.append(df_gon.loc[comp, m] * 100)
                 net_kok.append(df_net.loc[comp, m])
@@ -197,7 +208,6 @@ def load_data(uploaded_file):
                 izin_gun.append(df_izin_gun.loc[comp, m])
                 izin_ucret.append(df_izin_ucret.loc[comp, m])
             else:
-                # Şirket bulunamazsa 0 ekle (hata vermesin)
                 employees.append(0)
                 devamsizlik.append(0)
                 turnover_toplam.append(0)
@@ -220,10 +230,10 @@ def load_data(uploaded_file):
             'fmTlMaliyet': fm_tl,
             'izinGun': izin_gun,
             'izinUcret': izin_ucret,
-            'genelRaporOran': genel_rapor[idx] * 100,
-            'toplamCalisan': toplam_calisan[idx],
-            'toplamIzinGun': toplam_izin_gun[idx],
-            'toplamIzinUcret': toplam_izin_ucret[idx],
+            'genelRaporOran': genel_rapor[idx] * 100 if idx < len(genel_rapor) else 0,
+            'toplamCalisan': toplam_calisan[idx] if idx < len(toplam_calisan) else 0,
+            'toplamIzinGun': toplam_izin_gun[idx] if idx < len(toplam_izin_gun) else 0,
+            'toplamIzinUcret': toplam_izin_ucret[idx] if idx < len(toplam_izin_ucret) else 0,
         }
     return data
 
@@ -251,7 +261,7 @@ def main():
     selected_month = st.selectbox("📅 Ay Seçin", MONTHS, index=MONTHS.index("Temmuz"))
     month_data = data[selected_month]
 
-    # ----- KPI KARTLARI -----
+    # KPI Kartları
     col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
     col1.metric("👥 Çalışan", f"{month_data['toplamCalisan']:,.0f}", f"{selected_month}")
     col2.metric("📊 Genel rapor oranı", f"{month_data['genelRaporOran']:.2f}%")
@@ -264,7 +274,7 @@ def main():
 
     st.markdown("---")
 
-    # ----- GRAFİKLER (SATIR 1) -----
+    # Grafikler
     col1, col2 = st.columns(2)
 
     with col1:
@@ -307,7 +317,6 @@ def main():
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-    # ----- GRAFİKLER (SATIR 2) -----
     col3, col4 = st.columns(2)
 
     with col3:
@@ -345,7 +354,7 @@ def main():
 
     st.markdown("---")
 
-    # ----- HEATMAP -----
+    # Heatmap
     st.subheader("📋 Aylık Devamsızlık Raporu (Heatmap)")
     heatmap_data = {m: data[m]['devamsizlik'] for m in MONTHS}
     df_heat = pd.DataFrame(heatmap_data, index=COMPANIES)
@@ -358,7 +367,7 @@ def main():
 
     st.markdown("---")
 
-    # ----- DETAY TABLOSU -----
+    # Detay tablosu
     st.subheader(f"📋 {selected_month} Detaylı Metrikler")
     detail_df = pd.DataFrame({
         'Şirket': COMPANIES,
