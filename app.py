@@ -5,7 +5,6 @@ import plotly.graph_objects as go
 
 st.set_page_config(layout="wide", page_title="İK Dashboard")
 
-# Sabitler
 COMPANIES = [
     'Aralık Sigorta', 'Ekim Turizm', 'Eylül Girişim',
     'Haziran Servis', 'Intercity Yatırım Holding', 'Mart Denizcilik'
@@ -14,30 +13,31 @@ MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz']
 
 
 def clean_columns(df):
-    """Sütun isimlerindeki boşlukları temizler ve orijinal isimleri korur."""
+    """Sütun isimlerindeki boşlukları temizler."""
     df.columns = [str(col).strip() for col in df.columns]
     return df
 
 
 def get_month_cols(df):
-    """DataFrame'deki ay sütunlarını (MONTHS ile eşleşen) döndürür."""
+    """DataFrame'deki ay sütunlarını (büyük/küçük harf duyarsız) döndürür."""
     month_cols = []
     for col in df.columns:
         col_clean = str(col).strip()
         for m in MONTHS:
-            if col_clean == m:
+            if col_clean.lower() == m.lower():
                 month_cols.append(col)
                 break
     return month_cols
 
 
 def load_data(uploaded_file):
-    """Excel dosyasındaki tüm sayfaları okuyarak veriyi hazırlar."""
     # 1. Genel Turnover
     df_gt = pd.read_excel(uploaded_file, sheet_name='genel.turnover', skiprows=2, header=0)
     df_gt = clean_columns(df_gt)
-    df_gt = df_gt.set_index(df_gt.columns[0])  # ilk sütun şirket isimleri
+    df_gt = df_gt.set_index(df_gt.columns[0])
     month_cols = get_month_cols(df_gt)
+    if not month_cols:
+        raise ValueError("Genel Turnover sayfasında ay sütunları bulunamadı.")
     df_gt = df_gt[month_cols]
 
     # 2. Gönüllü Turnover
@@ -45,6 +45,8 @@ def load_data(uploaded_file):
     df_gon = clean_columns(df_gon)
     df_gon = df_gon.set_index(df_gon.columns[0])
     month_cols = get_month_cols(df_gon)
+    if not month_cols:
+        raise ValueError("Gönüllü Turnover sayfasında ay sütunları bulunamadı.")
     df_gon = df_gon[month_cols]
 
     # 3. Rapor Oranı (Devamsızlık)
@@ -52,6 +54,8 @@ def load_data(uploaded_file):
     df_rapor = clean_columns(df_rapor)
     df_rapor = df_rapor.set_index(df_rapor.columns[0])
     month_cols = get_month_cols(df_rapor)
+    if not month_cols:
+        raise ValueError("Rapor Oranı sayfasında ay sütunları bulunamadı.")
     df_rapor = df_rapor[month_cols]
 
     # 4. Çalışan Sayısı
@@ -59,6 +63,8 @@ def load_data(uploaded_file):
     df_calisan = clean_columns(df_calisan)
     df_calisan = df_calisan.set_index(df_calisan.columns[0])
     month_cols = get_month_cols(df_calisan)
+    if not month_cols:
+        raise ValueError("Çalışan Sayısı sayfasında ay sütunları bulunamadı.")
     df_calisan = df_calisan[month_cols]
 
     # 5. Net Kök Ücret
@@ -66,6 +72,8 @@ def load_data(uploaded_file):
     df_net = clean_columns(df_net)
     df_net = df_net.set_index(df_net.columns[0])
     month_cols = get_month_cols(df_net)
+    if not month_cols:
+        raise ValueError("Maliyet (Net) sayfasında ay sütunları bulunamadı.")
     df_net = df_net[month_cols]
 
     # 6. İşveren Maliyeti
@@ -73,6 +81,8 @@ def load_data(uploaded_file):
     df_isv = clean_columns(df_isv)
     df_isv = df_isv.set_index(df_isv.columns[0])
     month_cols = get_month_cols(df_isv)
+    if not month_cols:
+        raise ValueError("İşveren Maliyeti sayfasında ay sütunları bulunamadı.")
     df_isv = df_isv[month_cols]
 
     # 7. FM Saat
@@ -80,6 +90,8 @@ def load_data(uploaded_file):
     df_fm_saat = clean_columns(df_fm_saat)
     df_fm_saat = df_fm_saat.set_index(df_fm_saat.columns[0])
     month_cols = get_month_cols(df_fm_saat)
+    if not month_cols:
+        raise ValueError("FM Saat sayfasında ay sütunları bulunamadı.")
     df_fm_saat = df_fm_saat[month_cols]
 
     # 8. FM TL Maliyet
@@ -87,6 +99,8 @@ def load_data(uploaded_file):
     df_fm_tl = clean_columns(df_fm_tl)
     df_fm_tl = df_fm_tl.set_index(df_fm_tl.columns[0])
     month_cols = get_month_cols(df_fm_tl)
+    if not month_cols:
+        raise ValueError("FM TL Maliyet sayfasında ay sütunları bulunamadı.")
     df_fm_tl = df_fm_tl[month_cols]
 
     # 9. İzin Gün
@@ -94,6 +108,8 @@ def load_data(uploaded_file):
     df_izin_gun = clean_columns(df_izin_gun)
     df_izin_gun = df_izin_gun.set_index(df_izin_gun.columns[0])
     month_cols = get_month_cols(df_izin_gun)
+    if not month_cols:
+        raise ValueError("İzin Gün sayfasında ay sütunları bulunamadı.")
     df_izin_gun = df_izin_gun[month_cols]
 
     # 10. İzin Ücreti
@@ -101,31 +117,32 @@ def load_data(uploaded_file):
     df_izin_ucret = clean_columns(df_izin_ucret)
     df_izin_ucret = df_izin_ucret.set_index(df_izin_ucret.columns[0])
     month_cols = get_month_cols(df_izin_ucret)
+    if not month_cols:
+        raise ValueError("İzin Ücreti sayfasında ay sütunları bulunamadı.")
     df_izin_ucret = df_izin_ucret[month_cols]
 
-    # --- Toplam satırlarını oku (son satırlar) ---
-    # rapor_oran sayfasındaki "Aylık Genel Rapor Oranı" satırı (son satır)
+    # Toplam satırlarını oku (son satırlar)
     df_rapor_son = pd.read_excel(uploaded_file, sheet_name='rapor_oran', skiprows=7, header=None, nrows=1)
-    genel_rapor = df_rapor_son.iloc[0, 1:8].values  # ilk sütun boş, sonra 7 ay
+    genel_rapor = df_rapor_son.iloc[0, 1:8].values
 
-    # calisan.sayisi sayfasındaki "TOPLAM ÇALIŞAN SAYISI" satırı
     df_calisan_son = pd.read_excel(uploaded_file, sheet_name='calisan.sayisi', skiprows=8, header=None, nrows=1)
     toplam_calisan = df_calisan_son.iloc[0, 1:8].values
 
-    # izin_gun sayfasındaki "TOPLAM_GUN" satırı
     df_izin_gun_son = pd.read_excel(uploaded_file, sheet_name='izin_gun', skiprows=7, header=None, nrows=1)
     toplam_izin_gun = df_izin_gun_son.iloc[0, 1:8].values
 
-    # izin_ucret sayfasındaki "TOPLAM" satırı
     df_izin_ucret_son = pd.read_excel(uploaded_file, sheet_name='izin_ucret', skiprows=7, header=None, nrows=1)
     toplam_izin_ucret = df_izin_ucret_son.iloc[0, 1:8].values
 
     # Tüm ayları içeren sözlük
     data = {}
     for idx, m in enumerate(MONTHS):
+        # Güvenlik: sütun var mı kontrol et
+        if m not in df_gt.columns:
+            raise ValueError(f"'{m}' sütunu genel turnover'da bulunamadı.")
         data[m] = {
             'employees': [df_calisan.loc[c, m] for c in COMPANIES],
-            'devamsizlik': [df_rapor.loc[c, m] * 100 for c in COMPANIES],  # yüzde
+            'devamsizlik': [df_rapor.loc[c, m] * 100 for c in COMPANIES],
             'turnoverToplam': [df_gt.loc[c, m] * 100 for c in COMPANIES],
             'turnoverGonullu': [df_gon.loc[c, m] * 100 for c in COMPANIES],
             'netKokUcret': [df_net.loc[c, m] for c in COMPANIES],
@@ -165,9 +182,8 @@ def main():
     selected_month = st.selectbox("📅 Ay Seçin", MONTHS, index=MONTHS.index("Temmuz"))
     month_data = data[selected_month]
 
-    # ----- KPI KARTLARI -----
+    # KPI Kartları
     col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
-
     col1.metric("👥 Çalışan", f"{month_data['toplamCalisan']:,.0f}", f"{selected_month}")
     col2.metric("📊 Genel rapor oranı", f"{month_data['genelRaporOran']:.2f}%")
     col3.metric("💼 İşveren Maliyeti", f"{sum(month_data['isverenMaliyet']):,.0f} ₺")
@@ -179,7 +195,7 @@ def main():
 
     st.markdown("---")
 
-    # ----- GRAFİKLER (1. SATIR) -----
+    # Grafikler
     col1, col2 = st.columns(2)
 
     with col1:
@@ -222,7 +238,6 @@ def main():
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-    # ----- GRAFİKLER (2. SATIR) -----
     col3, col4 = st.columns(2)
 
     with col3:
@@ -260,7 +275,7 @@ def main():
 
     st.markdown("---")
 
-    # ----- HEATMAP -----
+    # Heatmap
     st.subheader("📋 Aylık Devamsızlık Raporu (Heatmap)")
     heatmap_data = {m: data[m]['devamsizlik'] for m in MONTHS}
     df_heat = pd.DataFrame(heatmap_data, index=COMPANIES)
@@ -273,7 +288,7 @@ def main():
 
     st.markdown("---")
 
-    # ----- DETAY TABLOSU -----
+    # Detay tablosu
     st.subheader(f"📋 {selected_month} Detaylı Metrikler")
     detail_df = pd.DataFrame({
         'Şirket': COMPANIES,
