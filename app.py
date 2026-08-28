@@ -162,18 +162,6 @@ def load_data(uploaded_file):
     return data
 
 
-def format_delta(current, previous, prev_month):
-    if previous is None or previous == 0:
-        return ""
-    diff = current - previous
-    if abs(diff) < 0.01:
-        return f"→ {prev_month} ile aynı"
-    if diff > 0:
-        return f"⬆ +{diff:,.2f} ({prev_month}'e göre)"
-    else:
-        return f"⬇ {diff:,.2f} ({prev_month}'e göre)"
-
-
 def main():
     st.title("📊 İK Konsolide Dashboard")
     st.markdown("---")
@@ -198,53 +186,62 @@ def main():
     month_data = data[selected_month]
     prev_data = data[prev_month] if prev_month else None
 
-    # ----- KPI KARTLARI -----
-    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
+    # ----- KPI KARTLARI (Renkli Delta) -----
+    def get_delta(current, previous):
+        if previous is None:
+            return None
+        return current - previous
 
-    def get_delta(current, prev, prev_month):
-        if prev_month is None or prev is None:
-            return ""
-        return format_delta(current, prev, prev_month)
+    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
 
     # 1. Çalışan
     cur = month_data['toplamCalisan']
     prev = prev_data['toplamCalisan'] if prev_data else None
-    col1.metric("👥 Çalışan", f"{cur:,.0f}", delta=get_delta(cur, prev, prev_month))
+    delta = get_delta(cur, prev)
+    label = f"{prev_month}'e göre" if prev_month else ""
+    col1.metric("👥 Çalışan", f"{cur:,.0f}", delta=delta, delta_color="normal", help=label)
 
     # 2. Genel Raporlu Oran
     cur = month_data['genelRaporOran']
     prev = prev_data['genelRaporOran'] if prev_data else None
-    col2.metric("📊 Genel Raporlu Oran", f"{cur:.2f}%", delta=get_delta(cur, prev, prev_month))
+    delta = get_delta(cur, prev)
+    col2.metric("📊 Genel Raporlu Oran", f"{cur:.2f}%", delta=delta, delta_color="normal", help=f"{prev_month}'e göre" if prev_month else "")
 
     # 3. İşveren Maliyeti
     cur = sum([d['isverenMaliyet'] for d in month_data['companies'].values()])
     prev = sum([d['isverenMaliyet'] for d in prev_data['companies'].values()]) if prev_data else None
-    col3.metric("💼 İşveren Maliyeti", f"{cur:,.0f} TL", delta=get_delta(cur, prev, prev_month))
+    delta = get_delta(cur, prev)
+    col3.metric("💼 İşveren Maliyeti", f"{cur:,.0f} TL", delta=delta, delta_color="normal", help=f"{prev_month}'e göre" if prev_month else "")
 
     # 4. Net Kök Ücret
     cur = sum([d['netKokUcret'] for d in month_data['companies'].values()])
     prev = sum([d['netKokUcret'] for d in prev_data['companies'].values()]) if prev_data else None
-    col4.metric("💰 Net Kök Ücret", f"{cur:,.0f} TL", delta=get_delta(cur, prev, prev_month))
+    delta = get_delta(cur, prev)
+    col4.metric("💰 Net Kök Ücret", f"{cur:,.0f} TL", delta=delta, delta_color="normal", help=f"{prev_month}'e göre" if prev_month else "")
 
     # 5. FM Saat
     cur = sum([d['fmSaat'] for d in month_data['companies'].values()])
     prev = sum([d['fmSaat'] for d in prev_data['companies'].values()]) if prev_data else None
-    col5.metric("⏱️ FM Saat", f"{cur:,.1f}", delta=get_delta(cur, prev, prev_month))
+    delta = get_delta(cur, prev)
+    col5.metric("⏱️ FM Saat", f"{cur:,.1f}", delta=delta, delta_color="normal", help=f"{prev_month}'e göre" if prev_month else "")
 
     # 6. FM TL Maliyet
     cur = sum([d['fmTlMaliyet'] for d in month_data['companies'].values()])
     prev = sum([d['fmTlMaliyet'] for d in prev_data['companies'].values()]) if prev_data else None
-    col6.metric("💸 FM TL Maliyet", f"{cur:,.0f} TL", delta=get_delta(cur, prev, prev_month))
+    delta = get_delta(cur, prev)
+    col6.metric("💸 FM TL Maliyet", f"{cur:,.0f} TL", delta=delta, delta_color="normal", help=f"{prev_month}'e göre" if prev_month else "")
 
     # 7. İzin Gün
     cur = sum([d['izinGun'] for d in month_data['companies'].values()])
     prev = sum([d['izinGun'] for d in prev_data['companies'].values()]) if prev_data else None
-    col7.metric("📅 İzin Gün", f"{cur:,.1f}", delta=get_delta(cur, prev, prev_month))
+    delta = get_delta(cur, prev)
+    col7.metric("📅 İzin Gün", f"{cur:,.1f}", delta=delta, delta_color="normal", help=f"{prev_month}'e göre" if prev_month else "")
 
     # 8. İzin Ücreti
     cur = sum([d['izinUcret'] for d in month_data['companies'].values()])
     prev = sum([d['izinUcret'] for d in prev_data['companies'].values()]) if prev_data else None
-    col8.metric("💎 İzin Ücreti", f"{cur:,.0f} TL", delta=get_delta(cur, prev, prev_month))
+    delta = get_delta(cur, prev)
+    col8.metric("💎 İzin Ücreti", f"{cur:,.0f} TL", delta=delta, delta_color="normal", help=f"{prev_month}'e göre" if prev_month else "")
 
     st.markdown("---")
 
