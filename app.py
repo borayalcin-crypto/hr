@@ -20,14 +20,20 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Secrets) sabit kod yerine daha güvenli olur.
 UPLOAD_PASSWORD = st.secrets.get("upload_password", "ik2026") if hasattr(st, "secrets") else "ik2026"
 
-# KPI kartlarındaki sayıların fontunu küçültmek için özel CSS
+# KPI kartlarındaki başlık/sayı/delta fontlarını küçültmek için özel CSS
 st.markdown("""
 <style>
 [data-testid="stMetricValue"] {
-    font-size: 1.3rem;
+    font-size: 1.05rem;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.78rem;
 }
 [data-testid="stMetricDelta"] {
-    font-size: 0.85rem;
+    font-size: 0.7rem;
+}
+[data-testid="stMetric"] {
+    padding: 0.4rem 0.3rem;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -148,6 +154,38 @@ def safe_read_son(uploaded_file, sheet, skip):
     except Exception:
         return [0] * 7
 
+def read_company_month_sheet(uploaded_file, sheet_name, total_label, agg='sum', months=None):
+    """Şirket satırları + en altta/ayrı bir 'TOPLAM' ya da 'Genel ...' satırı olan
+    sayfaları okur. Şirket bazlı DataFrame (ay sütunlu) ve ay->toplam sözlüğü döner.
+    Toplam satırı sayfada yoksa ya da boşsa, şirket verilerinden hesaplanır."""
+    if months is None:
+        months = MONTHS
+    df = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=0)
+    df = clean_columns(df)
+    first_col = df.columns[0]
+    df[first_col] = df[first_col].apply(normalize_company_name)
+    df = df.set_index(first_col)
+    month_cols = get_month_cols(df)
+
+    is_total_row = df.index.astype(str).str.strip().str.upper() == total_label.strip().upper()
+    total_row = df[is_total_row].iloc[0] if is_total_row.any() else None
+    df_companies = df[~is_total_row].copy()
+    for m in month_cols:
+        df_companies[m] = pd.to_numeric(df_companies[m], errors='coerce').fillna(0)
+
+    monthly_totals = {}
+    for m in months:
+        if m not in month_cols:
+            monthly_totals[m] = 0
+            continue
+        sheet_val = total_row.get(m) if total_row is not None else None
+        if sheet_val is not None and pd.notna(sheet_val):
+            monthly_totals[m] = sheet_val
+        else:
+            series = df_companies[m]
+            monthly_totals[m] = series.sum() if agg == 'sum' else series.mean()
+    return df_companies, monthly_totals
+
 # ----- VERİ OKUMA -----
 @st.cache_data(show_spinner=False)
 def load_data(_uploaded_file, cache_key=None):
@@ -230,6 +268,25 @@ def load_data(_uploaded_file, cache_key=None):
     toplam_izin_gun = safe_read_son(uploaded_file, 'izin_gun', 7)
     toplam_izin_ucret = safe_read_son(uploaded_file, 'izin_ucret', 7)
 
+    # 11. Aylık FM Yapan (kişi bazlı - en çok mesai yapanlar listesi için)
+    df_fm_yapan = pd.read_excel(uploaded_file, sheet_name='aylik.fm.yapan', header=0)
+    df_fm_yapan = clean_columns(df_fm_yapan)
+    if 'Şirket' in df_fm_yapan.columns:
+        df_fm_yapan['Şirket'] = df_fm_yapan['Şirket'].apply(normalize_company_name)
+    for m in get_month_cols(df_fm_yapan):
+        df_fm_yapan[m] = pd.to_numeric(df_fm_yapan[m], errors='coerce').fillna(0)
+
+    # 12. Kıdem Tazminatı (şirket x ay + TOPLAM satırı)
+    df_kidem, kidem_totals = read_company_month_sheet(uploaded_file, 'kidem.tazminati', 'TOPLAM', agg='sum')
+
+    # 13. İhbar Tazminatı (şirket x ay + TOPLAM satırı)
+    df_ihbar, ihbar_totals = read_company_month_sheet(uploaded_file, 'ihbar.tazminati', 'TOPLAM', agg='sum')
+
+    # 14. Kişi Başı Ortalama Maaş (şirket x ay + "Genel Kişi Başı Ortalama Maaş" satırı)
+    df_kisi_basi, kisi_basi_genel = read_company_month_sheet(
+        uploaded_file, 'kisi.basi.ort', 'Genel Kişi Başı Ortalama Maaş', agg='mean'
+    )
+
     # ----- VERİYİ OLUŞTUR -----
     data = {}
     for idx, m in enumerate(MONTHS):
@@ -247,11 +304,12 @@ def load_data(_uploaded_file, cache_key=None):
                     'fmTlMaliyet': df_fm_tl.loc[comp, m],
                     'izinGun': df_izin_gun.loc[comp, m],
                     'izinUcret': df_izin_ucret.loc[comp, m],
+                    'kisiBasiOrt': df_kisi_basi.loc[comp, m] if comp in df_kisi_basi.index and m in df_kisi_basi.columns else 0,
                 }
             else:
                 comp_data[comp] = {key: 0 for key in ['employees', 'devamsizlik', 'turnoverToplam', 'turnoverGonullu',
                                                         'netKokUcret', 'isverenMaliyet', 'fmSaat', 'fmTlMaliyet',
-                                                        'izinGun', 'izinUcret']}
+                                                        'izinGun', 'izinUcret', 'kisiBasiOrt']}
 
         # Sayfadaki hazır "toplam" satırı
         sheet_calisan = toplam_calisan[idx] if idx < len(toplam_calisan) else 0
@@ -273,8 +331,15 @@ def load_data(_uploaded_file, cache_key=None):
             'toplamCalisan': sheet_calisan if sheet_calisan else calc_calisan,
             'toplamIzinGun': sheet_izin_gun if sheet_izin_gun else calc_izin_gun,
             'toplamIzinUcret': sheet_izin_ucret if sheet_izin_ucret else calc_izin_ucret,
+            'kidemTazminati': kidem_totals.get(m, 0),
+            'ihbarTazminati': ihbar_totals.get(m, 0),
+            'kisiBasiOrtGenel': kisi_basi_genel.get(m, 0),
         }
-    return data
+
+    return {
+        'by_month': data,
+        'fm_yapan': df_fm_yapan,
+    }
 
 
 # ----- ANA UYGULAMA -----
@@ -306,10 +371,13 @@ def main():
 
     try:
         cache_key = f"{DATA_PATH}:{os.path.getmtime(DATA_PATH)}"
-        data = load_data(DATA_PATH, cache_key=cache_key)
+        all_data = load_data(DATA_PATH, cache_key=cache_key)
     except Exception as e:
         st.error(f"Hata oluştu: {e}")
         st.stop()
+
+    data = all_data['by_month']
+    fm_yapan_df = all_data['fm_yapan']
 
     selected_month = st.selectbox("📅 Ay Seçin", MONTHS, index=MONTHS.index("Temmuz"))
     month_idx = MONTHS.index(selected_month)
@@ -318,8 +386,8 @@ def main():
     month_data = data[selected_month]
     prev_data = data[prev_month] if prev_month else None
 
-    # ----- KPI KARTLARI -----
-    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
+    # ----- KPI KARTLARI (1. satır) -----
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     # 1. Çalışan
     cur = month_data['toplamCalisan']
@@ -351,23 +419,44 @@ def main():
     diff = calc_diff(cur, prev)
     col5.metric("⏱️ FM Saat", format_number(cur, 1), delta=format_delta_number(diff, 1))
 
-    # 6. FM TL Maliyet
+    # 6. FM (Net TL)
     cur = round(sum(d['fmTlMaliyet'] for d in month_data['companies'].values()), 2)
     prev = round(sum(d['fmTlMaliyet'] for d in prev_data['companies'].values()), 2) if prev_data else None
     diff = calc_diff(cur, prev)
-    col6.metric("💸 FM TL Maliyet", format_tl(cur), delta=format_delta_tl(diff))
+    col6.metric("💸 FM (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
-    # 7. İzin Gün
+    # ----- KPI KARTLARI (2. satır) -----
+    col7, col8, col9, col10, col11 = st.columns(5)
+
+    # 7. İzin Gün Bakiyesi
     cur = round(sum(d['izinGun'] for d in month_data['companies'].values()), 2)
     prev = round(sum(d['izinGun'] for d in prev_data['companies'].values()), 2) if prev_data else None
     diff = calc_diff(cur, prev)
-    col7.metric("📅 İzin Gün", format_number(cur, 1), delta=format_delta_number(diff, 1))
+    col7.metric("📅 İzin Gün Bakiyesi", format_number(cur, 1), delta=format_delta_number(diff, 1))
 
-    # 8. İzin Ücreti
+    # 8. İzin Ücreti (Net TL)
     cur = round(sum(d['izinUcret'] for d in month_data['companies'].values()), 2)
     prev = round(sum(d['izinUcret'] for d in prev_data['companies'].values()), 2) if prev_data else None
     diff = calc_diff(cur, prev)
-    col8.metric("💎 İzin Ücreti", format_tl(cur), delta=format_delta_tl(diff))
+    col8.metric("💎 İzin Ücreti (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
+
+    # 9. Kıdem Tazminatı
+    cur = round(month_data['kidemTazminati'], 2)
+    prev = round(prev_data['kidemTazminati'], 2) if prev_data else None
+    diff = calc_diff(cur, prev)
+    col9.metric("🏷️ Kıdem Tazminatı", format_tl(cur), delta=format_delta_tl(diff))
+
+    # 10. İhbar Tazminatı
+    cur = round(month_data['ihbarTazminati'], 2)
+    prev = round(prev_data['ihbarTazminati'], 2) if prev_data else None
+    diff = calc_diff(cur, prev)
+    col10.metric("📨 İhbar Tazminatı", format_tl(cur), delta=format_delta_tl(diff))
+
+    # 11. Kişi Başı Ortalama Maaş (Net TL)
+    cur = round(month_data['kisiBasiOrtGenel'], 2)
+    prev = round(prev_data['kisiBasiOrtGenel'], 2) if prev_data else None
+    diff = calc_diff(cur, prev)
+    col11.metric("🧮 Kişi Başı Ort. Maaş (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
     st.markdown("---")
 
@@ -410,7 +499,7 @@ def main():
     col3, col4 = st.columns(2)
 
     with col3:
-        st.subheader("📅 İzin Gün Sayıları")
+        st.subheader("📅 İzin Gün Bakiyesi")
         df_izin_gun = pd.DataFrame({
             'Şirket': COMPANIES,
             'İzin Günü': [month_data['companies'][c]['izinGun'] for c in COMPANIES]
@@ -423,17 +512,32 @@ def main():
         st.plotly_chart(fig3, use_container_width=True)
 
     with col4:
-        st.subheader("💰 İzin Ücretleri (TL)")
+        st.subheader("💰 İzin Ücretleri (Net TL)")
         df_izin_ucret = pd.DataFrame({
             'Şirket': COMPANIES,
-            'İzin Ücreti (TL)': [month_data['companies'][c]['izinUcret'] for c in COMPANIES]
+            'İzin Ücreti (Net TL)': [month_data['companies'][c]['izinUcret'] for c in COMPANIES]
         })
-        fig4 = px.bar(df_izin_ucret, x='Şirket', y='İzin Ücreti (TL)', color='İzin Ücreti (TL)',
+        fig4 = px.bar(df_izin_ucret, x='Şirket', y='İzin Ücreti (Net TL)', color='İzin Ücreti (Net TL)',
                       color_continuous_scale='Purples',
-                      text=df_izin_ucret['İzin Ücreti (TL)'].apply(format_tl))
+                      text=df_izin_ucret['İzin Ücreti (Net TL)'].apply(format_tl))
         fig4.update_traces(textposition='outside')
         fig4.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig4, use_container_width=True)
+
+    st.markdown("---")
+
+    # ----- EN ÇOK MESAİ YAPAN 10 KİŞİ -----
+    st.subheader(f"🏆 {selected_month} Ayında En Çok Mesai Yapan 10 Kişi")
+    if selected_month in fm_yapan_df.columns:
+        cols_needed = [c for c in ['Adı Soyadı', 'Şirket', 'Lokasyon'] if c in fm_yapan_df.columns]
+        top10 = fm_yapan_df[cols_needed + [selected_month]].copy()
+        top10 = top10.sort_values(by=selected_month, ascending=False).head(10)
+        top10 = top10.rename(columns={selected_month: 'FM Saat'})
+        top10['FM Saat'] = top10['FM Saat'].apply(lambda x: format_number(x, 1))
+        top10.insert(0, 'Sıra', range(1, len(top10) + 1))
+        st.dataframe(top10, use_container_width=True, hide_index=True)
+    else:
+        st.info("Seçilen ay için mesai verisi bulunamadı.")
 
     st.markdown("---")
 
@@ -452,9 +556,10 @@ def main():
             'Net Kök Ücret': format_tl(d['netKokUcret']),
             'İşveren Maliyeti': format_tl(d['isverenMaliyet']),
             'FM Saat': format_number(d['fmSaat'], 1),
-            'FM TL Maliyet': format_tl(d['fmTlMaliyet']),
-            'İzin Gün': format_number(d['izinGun'], 1),
-            'İzin Ücreti': format_tl(d['izinUcret'])
+            'FM (Net TL)': format_tl(d['fmTlMaliyet']),
+            'İzin Gün Bakiyesi': format_number(d['izinGun'], 1),
+            'İzin Ücreti (Net TL)': format_tl(d['izinUcret']),
+            'Kişi Başı Ort. Maaş (Net TL)': format_tl(d['kisiBasiOrt']),
         })
 
     # Toplam satırı
@@ -478,9 +583,10 @@ def main():
         'Net Kök Ücret': format_tl(total_net),
         'İşveren Maliyeti': format_tl(total_isveren),
         'FM Saat': format_number(total_fm_saat, 1),
-        'FM TL Maliyet': format_tl(total_fm_tl),
-        'İzin Gün': format_number(total_izin_gun, 1),
-        'İzin Ücreti': format_tl(total_izin_ucret)
+        'FM (Net TL)': format_tl(total_fm_tl),
+        'İzin Gün Bakiyesi': format_number(total_izin_gun, 1),
+        'İzin Ücreti (Net TL)': format_tl(total_izin_ucret),
+        'Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiOrtGenel']),
     }
     rows.append(total_row)
 
