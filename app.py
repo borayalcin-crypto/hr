@@ -1,9 +1,24 @@
+import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
 st.set_page_config(layout="wide", page_title="İK Dashboard")
+
+# Yüklenen Excel dosyasının sunucuda saklanacağı kalıcı yol.
+# Streamlit Community Cloud'da bu dosya, uygulama yeniden başlatılana/deploy
+# edilene kadar diskte kalır; tamamen kalıcı bir depolama değildir. Uzun vadeli
+# kalıcılık için GitHub'daki repo'ya commit etmek ya da bir bulut depolama
+# (S3, Google Sheets vb.) kullanmak daha güvenlidir.
+DATA_DIR = "data"
+DATA_PATH = os.path.join(DATA_DIR, "son_veri.xlsx")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Yükleme panelini korumak için basit bir şifre. Gerçek kullanımda bunu
+# st.secrets["upload_password"] üzerinden okumanız (Streamlit Cloud > Settings >
+# Secrets) sabit kod yerine daha güvenli olur.
+UPLOAD_PASSWORD = st.secrets.get("upload_password", "ik2026") if hasattr(st, "secrets") else "ik2026"
 
 COMPANIES = [
     'Aralık Sigorta',
@@ -122,7 +137,9 @@ def safe_read_son(uploaded_file, sheet, skip):
         return [0] * 7
 
 # ----- VERİ OKUMA -----
-def load_data(uploaded_file):
+@st.cache_data(show_spinner=False)
+def load_data(_uploaded_file, cache_key=None):
+    uploaded_file = _uploaded_file
     # 1. Genel Turnover
     df_gt = pd.read_excel(uploaded_file, sheet_name='genel.turnover', header=0)
     df_gt = clean_columns(df_gt)
@@ -251,17 +268,33 @@ def load_data(uploaded_file):
 # ----- ANA UYGULAMA -----
 def main():
     st.title("📊 İK Konsolide Dashboard")
+
+    # ----- GİZLİ VERİ GÜNCELLEME PANELİ -----
+    # Normal ziyaretçiler bunu görmeden direkt dashboard'u görür; veriyi
+    # güncellemek isteyen kişi (örn. siz) paneli açıp şifreyle yeni dosya yükler.
+    with st.sidebar:
+        with st.expander("🔒 Veriyi Güncelle", expanded=not os.path.exists(DATA_PATH)):
+            pwd = st.text_input("Şifre", type="password")
+            new_file = st.file_uploader("Yeni Excel dosyası", type=["xlsx"], key="admin_uploader")
+            if new_file is not None:
+                if pwd == UPLOAD_PASSWORD:
+                    with open(DATA_PATH, "wb") as f:
+                        f.write(new_file.getbuffer())
+                    st.cache_data.clear()
+                    st.success("✅ Veri güncellendi.")
+                    st.rerun()
+                else:
+                    st.error("Şifre yanlış.")
+
     st.markdown("---")
 
-    uploaded_file = st.file_uploader("Excel dosyasını yükleyin", type=["xlsx"])
-
-    if uploaded_file is None:
-        st.info("Lütfen bir Excel dosyası yükleyin.")
+    if not os.path.exists(DATA_PATH):
+        st.info("Henüz veri yüklenmedi. Soldaki '🔒 Veriyi Güncelle' panelinden bir Excel dosyası yükleyin.")
         return
 
     try:
-        data = load_data(uploaded_file)
-        st.success("✅ Veri başarıyla okundu!")
+        cache_key = f"{DATA_PATH}:{os.path.getmtime(DATA_PATH)}"
+        data = load_data(DATA_PATH, cache_key=cache_key)
     except Exception as e:
         st.error(f"Hata oluştu: {e}")
         st.stop()
