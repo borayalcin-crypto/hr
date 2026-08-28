@@ -5,7 +5,6 @@ import plotly.graph_objects as go
 
 st.set_page_config(layout="wide", page_title="İK Dashboard")
 
-# Sabitler
 COMPANIES = [
     'Aralık Sigorta',
     'Ekim Turizm',
@@ -17,7 +16,6 @@ COMPANIES = [
 MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz']
 
 def normalize_company_name(name):
-    """Şirket isimlerini standartlaştır"""
     if not isinstance(name, str):
         return name
     name = name.strip()
@@ -41,13 +39,6 @@ def get_month_cols(df):
                 month_cols.append(col)
                 break
     return month_cols
-
-def safe_read_excel(uploaded_file, sheet_name, skiprows=0, header=0, nrows=None):
-    """Güvenli excel okuma - hata durumunda None döndür"""
-    try:
-        return pd.read_excel(uploaded_file, sheet_name=sheet_name, skiprows=skiprows, header=header, nrows=nrows)
-    except Exception:
-        return None
 
 def load_data(uploaded_file):
     # ----- 1. GENEL TURNOVER -----
@@ -123,40 +114,26 @@ def load_data(uploaded_file):
     df_izin_ucret = df_izin_ucret.set_index('Şirket')[month_cols]
 
     # ----- TOPLAM SATIRLARI (son satırlar) -----
-    # Rapor oranı - "Aylık Genel Rapor Oranı"
-    df_rapor_son = pd.read_excel(uploaded_file, sheet_name='rapor_oran', skiprows=7, header=None, nrows=1)
-    if df_rapor_son.shape[1] >= 8:
-        genel_rapor = df_rapor_son.iloc[0, 1:8].values
-    else:
-        genel_rapor = [0]*7
+    def safe_read_son(sheet, skip):
+        try:
+            df = pd.read_excel(uploaded_file, sheet_name=sheet, skiprows=skip, header=None, nrows=1)
+            if df.shape[1] >= 8:
+                return df.iloc[0, 1:8].values
+            else:
+                return [0]*7
+        except:
+            return [0]*7
 
-    # Çalışan sayısı - "TOPLAM ÇALIŞAN SAYISI"
-    df_calisan_son = pd.read_excel(uploaded_file, sheet_name='calisan.sayisi', skiprows=8, header=None, nrows=1)
-    if df_calisan_son.shape[1] >= 8:
-        toplam_calisan = df_calisan_son.iloc[0, 1:8].values
-    else:
-        toplam_calisan = [0]*7
-
-    # İzin gün - "TOPLAM_GUN"
-    df_izin_gun_son = pd.read_excel(uploaded_file, sheet_name='izin_gun', skiprows=7, header=None, nrows=1)
-    if df_izin_gun_son.shape[1] >= 8:
-        toplam_izin_gun = df_izin_gun_son.iloc[0, 1:8].values
-    else:
-        toplam_izin_gun = [0]*7
-
-    # İzin ücret - "TOPLAM"
-    df_izin_ucret_son = pd.read_excel(uploaded_file, sheet_name='izin_ucret', skiprows=7, header=None, nrows=1)
-    if df_izin_ucret_son.shape[1] >= 8:
-        toplam_izin_ucret = df_izin_ucret_son.iloc[0, 1:8].values
-    else:
-        toplam_izin_ucret = [0]*7
+    genel_rapor = safe_read_son('rapor_oran', 7)
+    toplam_calisan = safe_read_son('calisan.sayisi', 8)
+    toplam_izin_gun = safe_read_son('izin_gun', 7)
+    toplam_izin_ucret = safe_read_son('izin_ucret', 7)
 
     # ----- VERİYİ OLUŞTUR -----
     data = {}
     for idx, m in enumerate(MONTHS):
         comp_data = {}
         for comp in COMPANIES:
-            # Eksik şirket kontrolü
             if comp in df_calisan.index:
                 comp_data[comp] = {
                     'employees': df_calisan.loc[comp, m],
@@ -185,14 +162,23 @@ def load_data(uploaded_file):
     return data
 
 
+def format_delta(current, previous, prev_month):
+    if previous is None or previous == 0:
+        return ""
+    diff = current - previous
+    if abs(diff) < 0.01:
+        return f"→ {prev_month} ile aynı"
+    if diff > 0:
+        return f"⬆ +{diff:,.2f} ({prev_month}'e göre)"
+    else:
+        return f"⬇ {diff:,.2f} ({prev_month}'e göre)"
+
+
 def main():
     st.title("📊 İK Konsolide Dashboard")
     st.markdown("---")
 
-    uploaded_file = st.file_uploader(
-        "Excel dosyasını yükleyin (dashboard_27082026.xlsx)",
-        type=["xlsx"]
-    )
+    uploaded_file = st.file_uploader("Excel dosyasını yükleyin", type=["xlsx"])
 
     if uploaded_file is None:
         st.info("Lütfen bir Excel dosyası yükleyin.")
@@ -212,95 +198,88 @@ def main():
     month_data = data[selected_month]
     prev_data = data[prev_month] if prev_month else None
 
-    # ----- KPI KARTLARI (önceki ay ile karşılaştırmalı) -----
-    def format_change(current, previous):
-        if previous is None or previous == 0:
-            return ""
-        diff = current - previous
-        if diff > 0:
-            return f"↑ +{diff:,.0f}" if abs(diff) >= 1 else f"↑ +{diff:.1f}"
-        elif diff < 0:
-            return f"↓ {diff:,.0f}" if abs(diff) >= 1 else f"↓ {diff:.1f}"
-        else:
-            return "→ 0"
-
+    # ----- KPI KARTLARI -----
     col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
 
-    # Çalışan
-    current_val = month_data['toplamCalisan']
-    prev_val = prev_data['toplamCalisan'] if prev_data else None
-    col1.metric("👥 Çalışan", f"{current_val:,.0f}", format_change(current_val, prev_val))
+    def get_delta(current, prev, prev_month):
+        if prev_month is None or prev is None:
+            return ""
+        return format_delta(current, prev, prev_month)
 
-    # Genel rapor oranı
-    current_val = month_data['genelRaporOran']
-    prev_val = prev_data['genelRaporOran'] if prev_data else None
-    col2.metric("📊 Genel rapor oranı", f"{current_val:.2f}%", format_change(current_val, prev_val))
+    # 1. Çalışan
+    cur = month_data['toplamCalisan']
+    prev = prev_data['toplamCalisan'] if prev_data else None
+    col1.metric("👥 Çalışan", f"{cur:,.0f}", delta=get_delta(cur, prev, prev_month))
 
-    # İşveren Maliyeti (toplam)
-    current_val = sum([d['isverenMaliyet'] for d in month_data['companies'].values()])
-    prev_val = sum([d['isverenMaliyet'] for d in prev_data['companies'].values()]) if prev_data else None
-    col3.metric("💼 İşveren Maliyeti", f"{current_val:,.0f} ₺", format_change(current_val, prev_val))
+    # 2. Genel Raporlu Oran
+    cur = month_data['genelRaporOran']
+    prev = prev_data['genelRaporOran'] if prev_data else None
+    col2.metric("📊 Genel Raporlu Oran", f"{cur:.2f}%", delta=get_delta(cur, prev, prev_month))
 
-    # Net Kök Ücret
-    current_val = sum([d['netKokUcret'] for d in month_data['companies'].values()])
-    prev_val = sum([d['netKokUcret'] for d in prev_data['companies'].values()]) if prev_data else None
-    col4.metric("💰 Net Kök Ücret", f"{current_val:,.0f} ₺", format_change(current_val, prev_val))
+    # 3. İşveren Maliyeti
+    cur = sum([d['isverenMaliyet'] for d in month_data['companies'].values()])
+    prev = sum([d['isverenMaliyet'] for d in prev_data['companies'].values()]) if prev_data else None
+    col3.metric("💼 İşveren Maliyeti", f"{cur:,.0f} TL", delta=get_delta(cur, prev, prev_month))
 
-    # FM_Saat
-    current_val = sum([d['fmSaat'] for d in month_data['companies'].values()])
-    prev_val = sum([d['fmSaat'] for d in prev_data['companies'].values()]) if prev_data else None
-    col5.metric("⏱️ FM_Saat", f"{current_val:,.1f}", format_change(current_val, prev_val))
+    # 4. Net Kök Ücret
+    cur = sum([d['netKokUcret'] for d in month_data['companies'].values()])
+    prev = sum([d['netKokUcret'] for d in prev_data['companies'].values()]) if prev_data else None
+    col4.metric("💰 Net Kök Ücret", f"{cur:,.0f} TL", delta=get_delta(cur, prev, prev_month))
 
-    # FM_TL Maliyet
-    current_val = sum([d['fmTlMaliyet'] for d in month_data['companies'].values()])
-    prev_val = sum([d['fmTlMaliyet'] for d in prev_data['companies'].values()]) if prev_data else None
-    col6.metric("💸 FM_TL Maliyet", f"{current_val:,.0f} ₺", format_change(current_val, prev_val))
+    # 5. FM Saat
+    cur = sum([d['fmSaat'] for d in month_data['companies'].values()])
+    prev = sum([d['fmSaat'] for d in prev_data['companies'].values()]) if prev_data else None
+    col5.metric("⏱️ FM Saat", f"{cur:,.1f}", delta=get_delta(cur, prev, prev_month))
 
-    # İzin Gün
-    current_val = sum([d['izinGun'] for d in month_data['companies'].values()])
-    prev_val = sum([d['izinGun'] for d in prev_data['companies'].values()]) if prev_data else None
-    col7.metric("📅 İzin Gün", f"{current_val:,.1f}", format_change(current_val, prev_val))
+    # 6. FM TL Maliyet
+    cur = sum([d['fmTlMaliyet'] for d in month_data['companies'].values()])
+    prev = sum([d['fmTlMaliyet'] for d in prev_data['companies'].values()]) if prev_data else None
+    col6.metric("💸 FM TL Maliyet", f"{cur:,.0f} TL", delta=get_delta(cur, prev, prev_month))
 
-    # İzin Ücreti
-    current_val = sum([d['izinUcret'] for d in month_data['companies'].values()])
-    prev_val = sum([d['izinUcret'] for d in prev_data['companies'].values()]) if prev_data else None
-    col8.metric("💎 İzin Ücreti", f"{current_val:,.0f} ₺", format_change(current_val, prev_val))
+    # 7. İzin Gün
+    cur = sum([d['izinGun'] for d in month_data['companies'].values()])
+    prev = sum([d['izinGun'] for d in prev_data['companies'].values()]) if prev_data else None
+    col7.metric("📅 İzin Gün", f"{cur:,.1f}", delta=get_delta(cur, prev, prev_month))
+
+    # 8. İzin Ücreti
+    cur = sum([d['izinUcret'] for d in month_data['companies'].values()])
+    prev = sum([d['izinUcret'] for d in prev_data['companies'].values()]) if prev_data else None
+    col8.metric("💎 İzin Ücreti", f"{cur:,.0f} TL", delta=get_delta(cur, prev, prev_month))
 
     st.markdown("---")
 
-    # ----- GRAFİKLER (SATIR 1) -----
+    # ----- GRAFİKLER -----
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("📊 Rapor Oranı")
+        st.subheader("📊 Raporlu Oran")
         df_plot = pd.DataFrame({
             'Şirket': COMPANIES,
-            'Devamsızlık %': [month_data['companies'][c]['devamsizlik'] for c in COMPANIES]
+            'Raporlu Oran %': [month_data['companies'][c]['devamsizlik'] for c in COMPANIES]
         })
-        fig1 = px.bar(df_plot, x='Şirket', y='Devamsızlık %', color='Devamsızlık %',
-                      color_continuous_scale='Blues', text_auto='.2f')
-        fig1.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig1, use_container_width=True)
+        fig = px.bar(df_plot, x='Şirket', y='Raporlu Oran %', color='Raporlu Oran %',
+                     color_continuous_scale='Blues', text_auto='.2f')
+        fig.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig, use_container_width=True)
 
     with col2:
         st.subheader("🔄 Turnover (Toplam & Gönüllü)")
-        df_plot2 = pd.DataFrame({
+        df2 = pd.DataFrame({
             'Şirket': COMPANIES,
             'Toplam': [month_data['companies'][c]['turnoverToplam'] for c in COMPANIES],
             'Gönüllü': [month_data['companies'][c]['turnoverGonullu'] for c in COMPANIES]
         })
         fig2 = go.Figure()
-        fig2.add_trace(go.Bar(x=df_plot2['Şirket'], y=df_plot2['Toplam'], name='Toplam Turnover',
-                              marker_color='#f59e0b', text=df_plot2['Toplam'].apply(lambda x: f"{x:.2f}%"),
+        fig2.add_trace(go.Bar(x=df2['Şirket'], y=df2['Toplam'], name='Toplam Turnover',
+                              marker_color='#f59e0b', text=df2['Toplam'].apply(lambda x: f"{x:.2f}%"),
                               textposition='outside'))
-        fig2.add_trace(go.Bar(x=df_plot2['Şirket'], y=df_plot2['Gönüllü'], name='Gönüllü Turnover',
-                              marker_color='#ec4899', text=df_plot2['Gönüllü'].apply(lambda x: f"{x:.2f}%"),
+        fig2.add_trace(go.Bar(x=df2['Şirket'], y=df2['Gönüllü'], name='Gönüllü Turnover',
+                              marker_color='#ec4899', text=df2['Gönüllü'].apply(lambda x: f"{x:.2f}%"),
                               textposition='outside'))
         fig2.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
                            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
         st.plotly_chart(fig2, use_container_width=True)
 
-    # ----- GRAFİKLER (SATIR 2) - İZİN GÜN ve İZİN ÜCRET -----
     col3, col4 = st.columns(2)
 
     with col3:
@@ -315,7 +294,7 @@ def main():
         st.plotly_chart(fig3, use_container_width=True)
 
     with col4:
-        st.subheader("💰 İzin Ücretleri")
+        st.subheader("💰 İzin Ücretleri (TL)")
         df_izin_ucret = pd.DataFrame({
             'Şirket': COMPANIES,
             'İzin Ücreti (TL)': [month_data['companies'][c]['izinUcret'] for c in COMPANIES]
@@ -327,25 +306,43 @@ def main():
 
     st.markdown("---")
 
-    # ----- DETAY TABLOSU (Tüm metrikler) -----
+    # ----- DETAY TABLOSU (DİP TOPLAMLI) -----
     st.subheader(f"📋 {selected_month} - Tüm Şirketlerin Detaylı Verileri")
-    detail_rows = []
+
+    rows = []
     for comp in COMPANIES:
         d = month_data['companies'][comp]
-        detail_rows.append({
+        rows.append({
             'Şirket': comp,
             'Çalışan': d['employees'],
-            'Devamsızlık %': f"{d['devamsizlik']:.2f}%",
-            'Turnover (Toplam) %': f"{d['turnoverToplam']:.2f}%",
-            'Turnover (Gönüllü) %': f"{d['turnoverGonullu']:.2f}%",
-            'Net Kök Ücret': f"{d['netKokUcret']:,.0f} ₺",
-            'İşveren Maliyeti': f"{d['isverenMaliyet']:,.0f} ₺",
+            'Raporlu Oran %': f"{d['devamsizlik']:.2f}%",
+            'Turnover Toplam %': f"{d['turnoverToplam']:.2f}%",
+            'Turnover Gönüllü %': f"{d['turnoverGonullu']:.2f}%",
+            'Net Kök Ücret (TL)': f"{d['netKokUcret']:,.0f} TL".replace(",", "."),
+            'İşveren Maliyeti (TL)': f"{d['isverenMaliyet']:,.0f} TL".replace(",", "."),
             'FM Saat': f"{d['fmSaat']:.1f}",
-            'FM TL Maliyet': f"{d['fmTlMaliyet']:,.0f} ₺",
+            'FM TL Maliyet (TL)': f"{d['fmTlMaliyet']:,.0f} TL".replace(",", "."),
             'İzin Gün': f"{d['izinGun']:.1f}",
-            'İzin Ücreti': f"{d['izinUcret']:,.0f} ₺",
+            'İzin Ücreti (TL)': f"{d['izinUcret']:,.0f} TL".replace(",", ".")
         })
-    detail_df = pd.DataFrame(detail_rows)
+
+    # Toplam satırı
+    total_row = {
+        'Şirket': '⭐ TOPLAM',
+        'Çalışan': sum([d['employees'] for d in month_data['companies'].values()]),
+        'Raporlu Oran %': f"{sum([d['devamsizlik'] for d in month_data['companies'].values()]) / len(COMPANIES):.2f}%",
+        'Turnover Toplam %': f"{sum([d['turnoverToplam'] for d in month_data['companies'].values()]) / len(COMPANIES):.2f}%",
+        'Turnover Gönüllü %': f"{sum([d['turnoverGonullu'] for d in month_data['companies'].values()]) / len(COMPANIES):.2f}%",
+        'Net Kök Ücret (TL)': f"{sum([d['netKokUcret'] for d in month_data['companies'].values()]):,.0f} TL".replace(",", "."),
+        'İşveren Maliyeti (TL)': f"{sum([d['isverenMaliyet'] for d in month_data['companies'].values()]):,.0f} TL".replace(",", "."),
+        'FM Saat': f"{sum([d['fmSaat'] for d in month_data['companies'].values()]):.1f}",
+        'FM TL Maliyet (TL)': f"{sum([d['fmTlMaliyet'] for d in month_data['companies'].values()]):,.0f} TL".replace(",", "."),
+        'İzin Gün': f"{sum([d['izinGun'] for d in month_data['companies'].values()]):.1f}",
+        'İzin Ücreti (TL)': f"{sum([d['izinUcret'] for d in month_data['companies'].values()]):,.0f} TL".replace(",", ".")
+    }
+    rows.append(total_row)
+
+    detail_df = pd.DataFrame(rows)
     st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
 
