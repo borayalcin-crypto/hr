@@ -11,9 +11,22 @@ st.set_page_config(layout="wide", page_title="İK Dashboard")
 # edilene kadar diskte kalır; tamamen kalıcı bir depolama değildir. Uzun vadeli
 # kalıcılık için GitHub'daki repo'ya commit etmek ya da bir bulut depolama
 # (S3, Google Sheets vb.) kullanmak daha güvenlidir.
+# Yüklenen Excel dosyasının sunucuda saklanacağı klasör. Dosya, orijinal
+# uzantısıyla (xlsx ya da xlsb) saklanır ki pandas doğru okuyucu motoru
+# (openpyxl / pyxlsb) otomatik seçebilsin.
+# Streamlit Community Cloud'da bu klasör, uygulama yeniden başlatılana/deploy
+# edilene kadar diskte kalır; tamamen kalıcı bir depolama değildir. Uzun vadeli
+# kalıcılık için GitHub'daki repo'ya commit etmek ya da bir bulut depolama
+# (S3, Google Sheets vb.) kullanmak daha güvenlidir.
 DATA_DIR = "data"
-DATA_PATH = os.path.join(DATA_DIR, "son_veri.xlsx")
 os.makedirs(DATA_DIR, exist_ok=True)
+
+def get_existing_data_path():
+    """data/ klasöründe daha önce yüklenmiş dosyayı (uzantısı ne olursa olsun) bulur."""
+    for fname in os.listdir(DATA_DIR):
+        if fname.startswith("son_veri."):
+            return os.path.join(DATA_DIR, fname)
+    return None
 
 # Yükleme panelini korumak için basit bir şifre. Gerçek kullanımda bunu
 # st.secrets["upload_password"] üzerinden okumanız (Streamlit Cloud > Settings >
@@ -24,16 +37,16 @@ UPLOAD_PASSWORD = st.secrets.get("upload_password", "ik2026") if hasattr(st, "se
 st.markdown("""
 <style>
 [data-testid="stMetricValue"] {
-    font-size: 1.05rem;
+    font-size: 1.0rem;
 }
 [data-testid="stMetricLabel"] {
-    font-size: 0.78rem;
+    font-size: 0.72rem;
 }
 [data-testid="stMetricDelta"] {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
 }
 [data-testid="stMetric"] {
-    padding: 0.4rem 0.3rem;
+    padding: 0.35rem 0.25rem;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -46,7 +59,7 @@ COMPANIES = [
     'Intercity Yatırım Holding',
     'Mart Denizcilik'
 ]
-MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz']
+MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos']
 
 # ----- FORMAT YARDIMCILARI -----
 def format_tl(value):
@@ -144,15 +157,27 @@ def get_month_cols(df):
                 break
     return month_cols
 
-def safe_read_son(uploaded_file, sheet, skip):
+def read_sheet_flexible(uploaded_file, candidates, **kwargs):
+    """Birden fazla olası sayfa adından ilk bulunanı okur (sayfa adı dosyalar arasında değişmiş olabilir)."""
+    last_err = None
+    for name in candidates:
+        try:
+            return pd.read_excel(uploaded_file, sheet_name=name, **kwargs)
+        except Exception as e:
+            last_err = e
+    raise last_err
+
+def safe_read_son(uploaded_file, sheet, skip, n_months=None):
+    if n_months is None:
+        n_months = len(MONTHS)
     try:
         df = pd.read_excel(uploaded_file, sheet_name=sheet, skiprows=skip, header=None, nrows=1)
-        if df.shape[1] >= 8:
-            return df.iloc[0, 1:8].values
+        if df.shape[1] >= n_months + 1:
+            return df.iloc[0, 1:n_months + 1].values
         else:
-            return [0] * 7
+            return [0] * n_months
     except Exception:
-        return [0] * 7
+        return [0] * n_months
 
 def read_company_month_sheet(uploaded_file, sheet_name, total_label, agg='sum', months=None):
     """Şirket satırları + en altta/ayrı bir 'TOPLAM' ya da 'Genel ...' satırı olan
@@ -221,7 +246,7 @@ def load_data(_uploaded_file, cache_key=None):
     df_calisan = df_calisan.set_index('Şirket')[month_cols]
 
     # 5. Net Kök Ücret
-    df_net = pd.read_excel(uploaded_file, sheet_name='maliyet', header=0)
+    df_net = read_sheet_flexible(uploaded_file, ['kok.ucret', 'maliyet'], header=0)
     df_net = clean_columns(df_net)
     month_cols = get_month_cols(df_net)
     df_net['Şirket'] = df_net.iloc[:, 0].apply(normalize_company_name)
@@ -286,6 +311,24 @@ def load_data(_uploaded_file, cache_key=None):
     df_kisi_basi, kisi_basi_genel = read_company_month_sheet(
         uploaded_file, 'kisi.basi.ort', 'Genel Kişi Başı Ortalama Maaş', agg='mean'
     )
+    # Sayfaya sonradan eklenen "Yıllık Ortalama" sütunu (şirket bazlı) - varsa al
+    yillik_ort_col = None
+    for col in df_kisi_basi.columns:
+        if str(col).strip().lower() in ('yıllık ortalama', 'yillik ortalama'):
+            yillik_ort_col = col
+            break
+
+    # 15. Kadın Oranı (şirket x ay + "Genel Kadın Oranı" satırı)
+    df_kadin, kadin_genel = read_company_month_sheet(uploaded_file, 'kadin.erkek', 'Genel Kadın Oranı', agg='mean')
+
+    # 16. İlk 6 Ay İşten Ayrılma Oranı (sayfada toplam/genel satırı yok, şirket ortalaması alınır)
+    df_ilk6ay, ilk6ay_ortalama = read_company_month_sheet(uploaded_file, 'ilk.6ay', '__YOK__', agg='mean')
+
+    # 17. Ay İçinde İşe Giren (sayfada toplam satırı yok, şirketler toplanır)
+    df_giris, giris_toplam = read_company_month_sheet(uploaded_file, 'aylik.giris', '__YOK__', agg='sum')
+
+    # 18. Ay İçinde İşten Ayrılan (sayfada toplam satırı yok, şirketler toplanır)
+    df_cikis, cikis_toplam = read_company_month_sheet(uploaded_file, 'aylik.cikis', '__YOK__', agg='sum')
 
     # ----- VERİYİ OLUŞTUR -----
     data = {}
@@ -305,11 +348,18 @@ def load_data(_uploaded_file, cache_key=None):
                     'izinGun': df_izin_gun.loc[comp, m],
                     'izinUcret': df_izin_ucret.loc[comp, m],
                     'kisiBasiOrt': df_kisi_basi.loc[comp, m] if comp in df_kisi_basi.index and m in df_kisi_basi.columns else 0,
+                    'yillikOrtMaas': (df_kisi_basi.loc[comp, yillik_ort_col]
+                                      if yillik_ort_col is not None and comp in df_kisi_basi.index else 0),
+                    'kadinOrani': df_kadin.loc[comp, m] * 100 if comp in df_kadin.index and m in df_kadin.columns else 0,
+                    'ilk6ayOrani': df_ilk6ay.loc[comp, m] * 100 if comp in df_ilk6ay.index and m in df_ilk6ay.columns else 0,
+                    'aySekiceGiris': df_giris.loc[comp, m] if comp in df_giris.index and m in df_giris.columns else 0,
+                    'aySekiceCikis': df_cikis.loc[comp, m] if comp in df_cikis.index and m in df_cikis.columns else 0,
                 }
             else:
                 comp_data[comp] = {key: 0 for key in ['employees', 'devamsizlik', 'turnoverToplam', 'turnoverGonullu',
                                                         'netKokUcret', 'isverenMaliyet', 'fmSaat', 'fmTlMaliyet',
-                                                        'izinGun', 'izinUcret', 'kisiBasiOrt']}
+                                                        'izinGun', 'izinUcret', 'kisiBasiOrt', 'yillikOrtMaas',
+                                                        'kadinOrani', 'ilk6ayOrani', 'aySekiceGiris', 'aySekiceCikis']}
 
         # Sayfadaki hazır "toplam" satırı
         sheet_calisan = toplam_calisan[idx] if idx < len(toplam_calisan) else 0
@@ -334,6 +384,10 @@ def load_data(_uploaded_file, cache_key=None):
             'kidemTazminati': kidem_totals.get(m, 0),
             'ihbarTazminati': ihbar_totals.get(m, 0),
             'kisiBasiOrtGenel': kisi_basi_genel.get(m, 0),
+            'kadinOraniGenel': kadin_genel.get(m, 0) * 100,
+            'ilk6ayOraniGenel': ilk6ay_ortalama.get(m, 0) * 100,
+            'girisToplam': giris_toplam.get(m, 0),
+            'cikisToplam': cikis_toplam.get(m, 0),
         }
 
     return {
@@ -349,13 +403,20 @@ def main():
     # ----- GİZLİ VERİ GÜNCELLEME PANELİ -----
     # Normal ziyaretçiler bunu görmeden direkt dashboard'u görür; veriyi
     # güncellemek isteyen kişi (örn. siz) paneli açıp şifreyle yeni dosya yükler.
+    existing_path = get_existing_data_path()
     with st.sidebar:
-        with st.expander("🔒 Veriyi Güncelle", expanded=not os.path.exists(DATA_PATH)):
+        with st.expander("🔒 Veriyi Güncelle", expanded=not existing_path):
             pwd = st.text_input("Şifre", type="password")
-            new_file = st.file_uploader("Yeni Excel dosyası", type=["xlsx"], key="admin_uploader")
+            new_file = st.file_uploader("Yeni Excel dosyası (.xlsx / .xlsb)", type=["xlsx", "xlsb"], key="admin_uploader")
             if new_file is not None:
                 if pwd == UPLOAD_PASSWORD:
-                    with open(DATA_PATH, "wb") as f:
+                    # Önceki dosyayı (farklı uzantıda kalmış olabilir) temizle
+                    for fname in os.listdir(DATA_DIR):
+                        if fname.startswith("son_veri."):
+                            os.remove(os.path.join(DATA_DIR, fname))
+                    ext = os.path.splitext(new_file.name)[1].lower()
+                    new_path = os.path.join(DATA_DIR, f"son_veri{ext}")
+                    with open(new_path, "wb") as f:
                         f.write(new_file.getbuffer())
                     st.cache_data.clear()
                     st.success("✅ Veri güncellendi.")
@@ -365,21 +426,23 @@ def main():
 
     st.markdown("---")
 
-    if not os.path.exists(DATA_PATH):
+    data_path = get_existing_data_path()
+    if not data_path:
         st.info("Henüz veri yüklenmedi. Soldaki '🔒 Veriyi Güncelle' panelinden bir Excel dosyası yükleyin.")
         return
 
     try:
-        cache_key = f"{DATA_PATH}:{os.path.getmtime(DATA_PATH)}"
-        all_data = load_data(DATA_PATH, cache_key=cache_key)
+        cache_key = f"{data_path}:{os.path.getmtime(data_path)}"
+        all_data = load_data(data_path, cache_key=cache_key)
     except Exception as e:
         st.error(f"Hata oluştu: {e}")
+        st.exception(e)
         st.stop()
 
     data = all_data['by_month']
     fm_yapan_df = all_data['fm_yapan']
 
-    selected_month = st.selectbox("📅 Ay Seçin", MONTHS, index=MONTHS.index("Temmuz"))
+    selected_month = st.selectbox("📅 Ay Seçin", MONTHS, index=len(MONTHS) - 1)
     month_idx = MONTHS.index(selected_month)
     prev_month = MONTHS[month_idx - 1] if month_idx > 0 else None
 
@@ -458,6 +521,33 @@ def main():
     diff = calc_diff(cur, prev)
     col11.metric("🧮 Kişi Başı Ort. Maaş (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
+    # ----- KPI KARTLARI (3. satır) -----
+    col12, col13, col14, col15 = st.columns(4)
+
+    # 12. Genel Kadın Oranı
+    cur = month_data['kadinOraniGenel']
+    prev = prev_data['kadinOraniGenel'] if prev_data else None
+    diff = calc_diff(cur, prev)
+    col12.metric("👩 Kadın Oranı", format_percent(cur), delta=format_delta_percent(diff))
+
+    # 13. İlk 6 Ay İşten Ayrılma Oranı
+    cur = month_data['ilk6ayOraniGenel']
+    prev = prev_data['ilk6ayOraniGenel'] if prev_data else None
+    diff = calc_diff(cur, prev)
+    col13.metric("⏳ İlk 6 Ay Ayrılma Oranı", format_percent(cur), delta=format_delta_percent(diff))
+
+    # 14. Ay İçinde İşe Giren
+    cur = round(month_data['girisToplam'], 2)
+    prev = round(prev_data['girisToplam'], 2) if prev_data else None
+    diff = calc_diff(cur, prev)
+    col14.metric("⬆️ Ay İçi İşe Giren", format_number(cur, 0), delta=format_delta_number(diff, 0))
+
+    # 15. Ay İçinde İşten Ayrılan
+    cur = round(month_data['cikisToplam'], 2)
+    prev = round(prev_data['cikisToplam'], 2) if prev_data else None
+    diff = calc_diff(cur, prev)
+    col15.metric("⬇️ Ay İçi İşten Ayrılan", format_number(cur, 0), delta=format_delta_number(diff, 0))
+
     st.markdown("---")
 
     # ----- GRAFİKLER -----
@@ -524,6 +614,41 @@ def main():
         fig4.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig4, use_container_width=True)
 
+    col5, col6 = st.columns(2)
+
+    with col5:
+        st.subheader("👩 Kadın Oranı")
+        df_kadin_plot = pd.DataFrame({
+            'Şirket': COMPANIES,
+            'Kadın Oranı %': [month_data['companies'][c]['kadinOrani'] for c in COMPANIES]
+        })
+        fig5 = px.bar(df_kadin_plot, x='Şirket', y='Kadın Oranı %', color='Kadın Oranı %',
+                      color_continuous_scale='Magenta',
+                      text=df_kadin_plot['Kadın Oranı %'].apply(format_percent))
+        fig5.update_traces(textposition='outside')
+        fig5.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig5, use_container_width=True)
+
+    with col6:
+        st.subheader("🔁 Ay İçi Giriş & Çıkış")
+        df_gc = pd.DataFrame({
+            'Şirket': COMPANIES,
+            'Giriş': [month_data['companies'][c]['aySekiceGiris'] for c in COMPANIES],
+            'Çıkış': [month_data['companies'][c]['aySekiceCikis'] for c in COMPANIES]
+        })
+        fig6 = go.Figure()
+        fig6.add_trace(go.Bar(x=df_gc['Şirket'], y=df_gc['Giriş'], name='Giriş',
+                               marker_color='#22c55e',
+                               text=df_gc['Giriş'].apply(lambda x: format_number(x, 0)),
+                               textposition='outside'))
+        fig6.add_trace(go.Bar(x=df_gc['Şirket'], y=df_gc['Çıkış'], name='Çıkış',
+                               marker_color='#ef4444',
+                               text=df_gc['Çıkış'].apply(lambda x: format_number(x, 0)),
+                               textposition='outside'))
+        fig6.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
+                            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+        st.plotly_chart(fig6, use_container_width=True)
+
     st.markdown("---")
 
     # ----- EN ÇOK MESAİ YAPAN 10 KİŞİ -----
@@ -560,6 +685,7 @@ def main():
             'İzin Gün Bakiyesi': format_number(d['izinGun'], 1),
             'İzin Ücreti (Net TL)': format_tl(d['izinUcret']),
             'Kişi Başı Ort. Maaş (Net TL)': format_tl(d['kisiBasiOrt']),
+            'Yıllık Ort. Maaş (Net TL)': format_tl(d['yillikOrtMaas']),
         })
 
     # Toplam satırı
@@ -573,6 +699,7 @@ def main():
     total_fm_tl = sum(d['fmTlMaliyet'] for d in month_data['companies'].values())
     total_izin_gun = sum(d['izinGun'] for d in month_data['companies'].values())
     total_izin_ucret = sum(d['izinUcret'] for d in month_data['companies'].values())
+    total_yillik_ort = sum(d['yillikOrtMaas'] for d in month_data['companies'].values()) / len(COMPANIES)
 
     total_row = {
         'Şirket': '⭐ TOPLAM',
@@ -587,6 +714,7 @@ def main():
         'İzin Gün Bakiyesi': format_number(total_izin_gun, 1),
         'İzin Ücreti (Net TL)': format_tl(total_izin_ucret),
         'Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiOrtGenel']),
+        'Yıllık Ort. Maaş (Net TL)': format_tl(total_yillik_ort),
     }
     rows.append(total_row)
 
