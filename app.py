@@ -255,10 +255,11 @@ def load_data(_uploaded_file, cache_key=None):
     try:
         df_gnl = pd.read_excel(uploaded_file, sheet_name='gnl.kisi.basi.ort', header=0)
         df_gnl = clean_columns(df_gnl)
-        # "Genel Kişi Başı Ortalama Maaş" satırını bul
-        genel_satir = df_gnl[df_gnl.iloc[:, 0].astype(str).str.strip().str.upper() == 'GENEL KİŞİ BAŞI ORTALAMA MAAŞ']
-        if not genel_satir.empty:
-            month_cols = get_month_cols(genel_satir)
+        # Sayfa tek bir özet satırından oluşuyor; etiket metni değişebildiği için
+        # (örn. "Kişi Başı Ortalama Maaş" / "Genel Kişi Başı Ortalama Maaş") satır
+        # adına bakmadan doğrudan ilk veri satırını kullanıyoruz.
+        if len(df_gnl) > 0:
+            genel_satir = df_gnl.iloc[[0]]
             gnl_kisi_basi_vals = {}
             for m in MONTHS:
                 if m in genel_satir.columns:
