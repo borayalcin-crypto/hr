@@ -168,8 +168,6 @@ def load_data(_uploaded_file, cache_key=None):
 
     # ----- 1. KÜMÜLATİF GENEL TURNOVER -----
     df_gt, gt_monthly_totals = read_company_month_sheet(uploaded_file, 'genel.turnover', 'Genel Toplam', agg='sum')
-    # df_gt: şirket x ay (kümülatif oranlar)
-    # gt_monthly_totals: ay -> genel toplam (kümülatif)
 
     # ----- 2. KÜMÜLATİF GÖNÜLLÜ TURNOVER -----
     df_gon, gon_monthly_totals = read_company_month_sheet(uploaded_file, 'gonullu.turnover', 'Genel Toplam', agg='sum')
@@ -348,24 +346,20 @@ def load_data(_uploaded_file, cache_key=None):
             'genelAylikGonullu': genel_aylik_gonullu,
         }
 
-    # Şirket bazlı toplam turnover (kümülatif son sütun) - mevcut kodda olduğu gibi
-    # Bunu ayrıca okuyalım
+    # Şirket bazlı toplam turnover (kümülatif son sütun)
     df_gt_total = pd.read_excel(uploaded_file, sheet_name='genel.turnover', header=0)
     df_gt_total = clean_columns(df_gt_total)
-    # "Sirket Bazlı Toplam Turnover" sütununu bul
     total_col = None
     for col in df_gt_total.columns:
         if 'toplam' in str(col).lower():
             total_col = col
             break
     if total_col is None:
-        total_col = df_gt_total.columns[-1]  # son sütun
+        total_col = df_gt_total.columns[-1]
     df_gt_total['Şirket'] = df_gt_total.iloc[:, 0].apply(normalize_company_name)
     df_gt_total = df_gt_total.set_index('Şirket')
-    # Şirket bazlı toplam turnover (kümülatif)
     turnover_sirket_toplam = df_gt_total[~df_gt_total.index.isna()][total_col] * 100
 
-    # Aynı şekilde gönüllü için
     df_gon_total = pd.read_excel(uploaded_file, sheet_name='gonullu.turnover', header=0)
     df_gon_total = clean_columns(df_gon_total)
     total_col_gon = None
@@ -388,7 +382,6 @@ def load_data(_uploaded_file, cache_key=None):
         'by_month': data,
         'fm_yapan': df_fm_yapan,
         'turnoverSirketBazli': turnover_sirket_bazli,
-        # Aylık genel toplamlar zaten data içinde
     }
 
 
@@ -523,6 +516,7 @@ def main():
     st.markdown("---")
 
     # ----- GRAFİKLER -----
+    # 1. Satır: Raporlu Oran & Kümülatif Turnover
     col1, col2 = st.columns(2)
 
     with col1:
@@ -539,107 +533,141 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.subheader("🔄 Turnover (Kümülatif & Aylık)")
-        df2 = pd.DataFrame({
+        st.subheader("📈 Şirket Bazında Kümülatif Turnover")
+        df_kum = pd.DataFrame({
             'Şirket': COMPANIES,
             'Küm. Genel': [month_data['companies'][c]['turnoverKumulatif'] for c in COMPANIES],
-            'Küm. Gön.': [month_data['companies'][c]['turnoverGonulluKumulatif'] for c in COMPANIES],
-            'Aylık Genel': [month_data['companies'][c]['turnoverAylik'] for c in COMPANIES],
-            'Aylık Gön.': [month_data['companies'][c]['turnoverGonulluAylik'] for c in COMPANIES]
+            'Küm. Gönüllü': [month_data['companies'][c]['turnoverGonulluKumulatif'] for c in COMPANIES]
         })
-        fig2 = go.Figure()
-        fig2.add_trace(go.Bar(x=df2['Şirket'], y=df2['Küm. Genel'], name='Küm. Genel',
-                              marker_color='#f59e0b', text=df2['Küm. Genel'].apply(format_percent),
-                              textposition='outside'))
-        fig2.add_trace(go.Bar(x=df2['Şirket'], y=df2['Küm. Gön.'], name='Küm. Gön.',
-                              marker_color='#ec4899', text=df2['Küm. Gön.'].apply(format_percent),
-                              textposition='outside'))
-        fig2.add_trace(go.Bar(x=df2['Şirket'], y=df2['Aylık Genel'], name='Aylık Genel',
-                              marker_color='#3b82f6', text=df2['Aylık Genel'].apply(format_percent),
-                              textposition='outside'))
-        fig2.add_trace(go.Bar(x=df2['Şirket'], y=df2['Aylık Gön.'], name='Aylık Gön.',
-                              marker_color='#8b5cf6', text=df2['Aylık Gön.'].apply(format_percent),
-                              textposition='outside'))
-        fig2.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
-                           legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
-        st.plotly_chart(fig2, use_container_width=True)
+        fig_kum = go.Figure()
+        fig_kum.add_trace(go.Bar(x=df_kum['Şirket'], y=df_kum['Küm. Genel'], name='Küm. Genel',
+                                 marker_color='#f59e0b', text=df_kum['Küm. Genel'].apply(format_percent),
+                                 textposition='outside'))
+        fig_kum.add_trace(go.Bar(x=df_kum['Şirket'], y=df_kum['Küm. Gönüllü'], name='Küm. Gönüllü',
+                                 marker_color='#ec4899', text=df_kum['Küm. Gönüllü'].apply(format_percent),
+                                 textposition='outside'))
+        fig_kum.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
+                              legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+        st.plotly_chart(fig_kum, use_container_width=True)
 
-    # ----- KÜMÜLATİF TURNOVER TREND GRAFİĞİ -----
-    st.subheader("📈 Kümülatif Turnover Trendi (Genel & Gönüllü)")
-    trend_df = pd.DataFrame({
-        'Ay': MONTHS,
-        'Küm. Genel Turnover': [data[m]['genelKumulatifTurnover'] for m in MONTHS],
-        'Küm. Gönüllü Turnover': [data[m]['genelKumulatifGonullu'] for m in MONTHS]
-    })
-    fig_trend = px.line(trend_df, x='Ay', y=['Küm. Genel Turnover', 'Küm. Gönüllü Turnover'],
-                        markers=True, color_discrete_map={'Küm. Genel Turnover': '#f59e0b', 'Küm. Gönüllü Turnover': '#ec4899'})
-    fig_trend.update_layout(height=400, margin=dict(l=10, r=10, t=30, b=10))
-    st.plotly_chart(fig_trend, use_container_width=True)
-
-    st.markdown("---")
-
+    # 2. Satır: Aylık Turnover & FM Saat
     col3, col4 = st.columns(2)
 
     with col3:
+        st.subheader("📊 Şirket Bazında Aylık Turnover")
+        df_aylik = pd.DataFrame({
+            'Şirket': COMPANIES,
+            'Aylık Genel': [month_data['companies'][c]['turnoverAylik'] for c in COMPANIES],
+            'Aylık Gönüllü': [month_data['companies'][c]['turnoverGonulluAylik'] for c in COMPANIES]
+        })
+        fig_aylik = go.Figure()
+        fig_aylik.add_trace(go.Bar(x=df_aylik['Şirket'], y=df_aylik['Aylık Genel'], name='Aylık Genel',
+                                   marker_color='#3b82f6', text=df_aylik['Aylık Genel'].apply(format_percent),
+                                   textposition='outside'))
+        fig_aylik.add_trace(go.Bar(x=df_aylik['Şirket'], y=df_aylik['Aylık Gönüllü'], name='Aylık Gönüllü',
+                                   marker_color='#8b5cf6', text=df_aylik['Aylık Gönüllü'].apply(format_percent),
+                                   textposition='outside'))
+        fig_aylik.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
+                                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+        st.plotly_chart(fig_aylik, use_container_width=True)
+
+    with col4:
+        st.subheader("⏱️ Şirket Bazında FM Saat")
+        df_fm = pd.DataFrame({
+            'Şirket': COMPANIES,
+            'FM Saat': [month_data['companies'][c]['fmSaat'] for c in COMPANIES]
+        })
+        fig_fm = px.bar(df_fm, x='Şirket', y='FM Saat', color='FM Saat',
+                        color_continuous_scale='Oranges',
+                        text=df_fm['FM Saat'].apply(lambda x: format_number(x, 1)))
+        fig_fm.update_traces(textposition='outside')
+        fig_fm.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig_fm, use_container_width=True)
+
+    # 3. Satır: Çalışan Sayısı & İzin Gün
+    col5, col6 = st.columns(2)
+
+    with col5:
+        st.subheader("👥 Şirket Bazında Çalışan Sayısı")
+        df_calisan_plot = pd.DataFrame({
+            'Şirket': COMPANIES,
+            'Çalışan Sayısı': [month_data['companies'][c]['employees'] for c in COMPANIES]
+        })
+        fig_calisan = px.bar(df_calisan_plot, x='Şirket', y='Çalışan Sayısı', color='Çalışan Sayısı',
+                             color_continuous_scale='Greens',
+                             text=df_calisan_plot['Çalışan Sayısı'].apply(lambda x: format_number(x, 0)))
+        fig_calisan.update_traces(textposition='outside')
+        fig_calisan.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig_calisan, use_container_width=True)
+
+    with col6:
         st.subheader("📅 İzin Gün Bakiyesi")
         df_izin_gun = pd.DataFrame({
             'Şirket': COMPANIES,
             'İzin Günü': [month_data['companies'][c]['izinGun'] for c in COMPANIES]
         })
-        fig3 = px.bar(df_izin_gun, x='Şirket', y='İzin Günü', color='İzin Günü',
-                      color_continuous_scale='Teal',
-                      text=df_izin_gun['İzin Günü'].apply(lambda x: format_number(x, 1)))
-        fig3.update_traces(textposition='outside')
-        fig3.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig3, use_container_width=True)
+        fig_izin = px.bar(df_izin_gun, x='Şirket', y='İzin Günü', color='İzin Günü',
+                          color_continuous_scale='Teal',
+                          text=df_izin_gun['İzin Günü'].apply(lambda x: format_number(x, 1)))
+        fig_izin.update_traces(textposition='outside')
+        fig_izin.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig_izin, use_container_width=True)
 
-    with col4:
+    # 4. Satır: İzin Ücreti & Kadın Oranı
+    col7, col8 = st.columns(2)
+
+    with col7:
         st.subheader("💰 İzin Ücretleri (Net TL)")
         df_izin_ucret = pd.DataFrame({
             'Şirket': COMPANIES,
             'İzin Ücreti (Net TL)': [month_data['companies'][c]['izinUcret'] for c in COMPANIES]
         })
-        fig4 = px.bar(df_izin_ucret, x='Şirket', y='İzin Ücreti (Net TL)', color='İzin Ücreti (Net TL)',
-                      color_continuous_scale='Purples',
-                      text=df_izin_ucret['İzin Ücreti (Net TL)'].apply(format_tl))
-        fig4.update_traces(textposition='outside')
-        fig4.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig4, use_container_width=True)
+        fig_ucret = px.bar(df_izin_ucret, x='Şirket', y='İzin Ücreti (Net TL)', color='İzin Ücreti (Net TL)',
+                           color_continuous_scale='Purples',
+                           text=df_izin_ucret['İzin Ücreti (Net TL)'].apply(format_tl))
+        fig_ucret.update_traces(textposition='outside')
+        fig_ucret.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig_ucret, use_container_width=True)
 
-    col5, col6 = st.columns(2)
-
-    with col5:
+    with col8:
         st.subheader("👩 Kadın Oranı")
         df_kadin_plot = pd.DataFrame({
             'Şirket': COMPANIES,
             'Kadın Oranı %': [month_data['companies'][c]['kadinOrani'] for c in COMPANIES]
         })
-        fig5 = px.bar(df_kadin_plot, x='Şirket', y='Kadın Oranı %', color='Kadın Oranı %',
-                      color_continuous_scale='Magenta',
-                      text=df_kadin_plot['Kadın Oranı %'].apply(format_percent))
-        fig5.update_traces(textposition='outside')
-        fig5.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig5, use_container_width=True)
+        fig_kadin = px.bar(df_kadin_plot, x='Şirket', y='Kadın Oranı %', color='Kadın Oranı %',
+                           color_continuous_scale='Magenta',
+                           text=df_kadin_plot['Kadın Oranı %'].apply(format_percent))
+        fig_kadin.update_traces(textposition='outside')
+        fig_kadin.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig_kadin, use_container_width=True)
 
-    with col6:
+    # 5. Satır: Giriş/Çıkış & boş
+    col9, col10 = st.columns(2)
+
+    with col9:
         st.subheader("🔁 Ay İçi Giriş & Çıkış")
         df_gc = pd.DataFrame({
             'Şirket': COMPANIES,
             'Giriş': [month_data['companies'][c]['aySekiceGiris'] for c in COMPANIES],
             'Çıkış': [month_data['companies'][c]['aySekiceCikis'] for c in COMPANIES]
         })
-        fig6 = go.Figure()
-        fig6.add_trace(go.Bar(x=df_gc['Şirket'], y=df_gc['Giriş'], name='Giriş',
-                               marker_color='#22c55e',
-                               text=df_gc['Giriş'].apply(lambda x: format_number(x, 0)),
-                               textposition='outside'))
-        fig6.add_trace(go.Bar(x=df_gc['Şirket'], y=df_gc['Çıkış'], name='Çıkış',
-                               marker_color='#ef4444',
-                               text=df_gc['Çıkış'].apply(lambda x: format_number(x, 0)),
-                               textposition='outside'))
-        fig6.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
-                            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
-        st.plotly_chart(fig6, use_container_width=True)
+        fig_gc = go.Figure()
+        fig_gc.add_trace(go.Bar(x=df_gc['Şirket'], y=df_gc['Giriş'], name='Giriş',
+                                marker_color='#22c55e',
+                                text=df_gc['Giriş'].apply(lambda x: format_number(x, 0)),
+                                textposition='outside'))
+        fig_gc.add_trace(go.Bar(x=df_gc['Şirket'], y=df_gc['Çıkış'], name='Çıkış',
+                                marker_color='#ef4444',
+                                text=df_gc['Çıkış'].apply(lambda x: format_number(x, 0)),
+                                textposition='outside'))
+        fig_gc.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
+                             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+        st.plotly_chart(fig_gc, use_container_width=True)
+
+    with col10:
+        # Boş alan, istenirse başka bir grafik eklenebilir
+        st.empty()
 
     st.markdown("---")
 
@@ -684,7 +712,6 @@ def main():
             'Ay İçi İşten Ayrılan': format_number(d['aySekiceCikis'], 0),
         })
 
-    # Toplam satırı
     total_employees = sum(d['employees'] for d in month_data['companies'].values())
     total_rapor = sum(d['devamsizlik'] for d in month_data['companies'].values()) / len(COMPANIES)
     total_net = sum(d['netKokUcret'] for d in month_data['companies'].values())
