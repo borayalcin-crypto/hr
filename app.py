@@ -1,3 +1,410 @@
+import os
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+st.set_page_config(layout="wide", page_title="İK Dashboard")
+
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+def get_existing_data_path():
+    for fname in os.listdir(DATA_DIR):
+        if fname.startswith("son_veri."):
+            return os.path.join(DATA_DIR, fname)
+    return None
+
+UPLOAD_PASSWORD = st.secrets.get("upload_password", "ik2026") if hasattr(st, "secrets") else "ik2026"
+
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] { font-size: 1.0rem; }
+[data-testid="stMetricLabel"] { font-size: 0.72rem; }
+[data-testid="stMetricDelta"] { font-size: 0.65rem; }
+[data-testid="stMetric"] { padding: 0.35rem 0.25rem; }
+</style>
+""", unsafe_allow_html=True)
+
+COMPANIES = [
+    'Aralık Sigorta', 'Ekim Turizm', 'Eylül Girişim',
+    'Haziran Servis', 'Intercity Yatırım Holding', 'Mart Denizcilik'
+]
+MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos']
+
+# ----- FORMAT YARDIMCILARI -----
+def format_tl(value):
+    if value is None:
+        return "0TL"
+    try:
+        formatted = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"{formatted}TL"
+    except:
+        return f"{value:.2f}TL".replace(".", ",")
+
+def format_tl_no_decimal(value):
+    if value is None:
+        return "0TL"
+    try:
+        formatted = f"{value:,.0f}".replace(",", ".")
+        return f"{formatted}TL"
+    except:
+        return f"{value:.0f}TL"
+
+def format_percent(value):
+    if value is None:
+        return "%0"
+    try:
+        formatted = f"{value:.2f}".replace(".", ",")
+        return f"%{formatted}"
+    except:
+        return f"%{value:.2f}".replace(".", ",")
+
+def format_number(value, decimals=1):
+    if value is None:
+        return "0"
+    try:
+        formatted = f"{value:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return formatted
+    except:
+        return str(value)
+
+def calc_diff(current, previous):
+    if previous is None:
+        return None
+    return round(current - previous, 4)
+
+def format_delta_tl(diff):
+    if diff is None:
+        return None
+    sign = "+" if diff >= 0 else "-"
+    return f"{sign}{format_tl(abs(diff))}"
+
+def format_delta_percent(diff):
+    if diff is None:
+        return None
+    sign = "+" if diff >= 0 else "-"
+    return f"{sign}{format_percent(abs(diff))}"
+
+def format_delta_number(diff, decimals=0):
+    if diff is None:
+        return None
+    sign = "+" if diff >= 0 else "-"
+    return f"{sign}{format_number(abs(diff), decimals)}"
+
+# ----- NORMALİZASYON -----
+def normalize_company_name(name):
+    if not isinstance(name, str):
+        return name
+    name = name.strip()
+    replacements = {
+        'EKIM TURIZM': 'Ekim Turizm',
+        'HAZIRAN': 'Haziran Servis',
+        'Holding': 'Intercity Yatırım Holding'
+    }
+    return replacements.get(name, name)
+
+def clean_columns(df):
+    df.columns = [str(col).strip() for col in df.columns]
+    return df
+
+def get_month_cols(df):
+    month_cols = []
+    for col in df.columns:
+        col_clean = str(col).strip()
+        for m in MONTHS:
+            if col_clean.lower() == m.lower():
+                month_cols.append(col)
+                break
+    return month_cols
+
+def clean_numeric_df(df):
+    return df.apply(pd.to_numeric, errors='coerce').fillna(0)
+
+def read_company_month_sheet(uploaded_file, sheet_name, total_label, agg='sum', months=None):
+    if months is None:
+        months = MONTHS
+    df = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=0)
+    df = clean_columns(df)
+    first_col = df.columns[0]
+    df[first_col] = df[first_col].apply(normalize_company_name)
+    df = df.set_index(first_col)
+    month_cols = get_month_cols(df)
+
+    is_total_row = df.index.astype(str).str.strip().str.upper() == total_label.strip().upper()
+    total_row = df[is_total_row].iloc[0] if is_total_row.any() else None
+    df_companies = df[~is_total_row].copy()
+    for m in month_cols:
+        df_companies[m] = pd.to_numeric(df_companies[m], errors='coerce').fillna(0)
+
+    monthly_totals = {}
+    for m in months:
+        if m not in month_cols:
+            monthly_totals[m] = 0
+            continue
+        sheet_val = total_row.get(m) if total_row is not None else None
+        if sheet_val is not None and pd.notna(sheet_val):
+            monthly_totals[m] = sheet_val
+        else:
+            series = df_companies[m]
+            monthly_totals[m] = series.sum() if agg == 'sum' else series.mean()
+    return df_companies, monthly_totals
+
+def safe_read_son(uploaded_file, sheet, skip, n_months=None):
+    if n_months is None:
+        n_months = len(MONTHS)
+    try:
+        df = pd.read_excel(uploaded_file, sheet_name=sheet, skiprows=skip, header=None, nrows=1)
+        if df.shape[1] >= n_months + 1:
+            return df.iloc[0, 1:n_months + 1].values
+        else:
+            return [0] * n_months
+    except:
+        return [0] * n_months
+
+@st.cache_data(show_spinner=False)
+def load_data(_uploaded_file, cache_key=None):
+    uploaded_file = _uploaded_file
+
+    # ----- 1. KÜMÜLATİF GENEL TURNOVER -----
+    df_gt, gt_monthly_totals = read_company_month_sheet(uploaded_file, 'genel.turnover', 'Genel Toplam', agg='sum')
+
+    # ----- 2. KÜMÜLATİF GÖNÜLLÜ TURNOVER -----
+    df_gon, gon_monthly_totals = read_company_month_sheet(uploaded_file, 'gonullu.turnover', 'Genel Toplam', agg='sum')
+
+    # ----- 3. AYLIK GENEL TURNOVER -----
+    df_aylik_gt, aylik_gt_totals = read_company_month_sheet(uploaded_file, 'aylik.turnover', 'Genel Toplam', agg='sum')
+
+    # ----- 4. AYLIK GÖNÜLLÜ TURNOVER -----
+    df_aylik_gon, aylik_gon_totals = read_company_month_sheet(uploaded_file, 'aylik.gonullu.turnover', 'Genel Toplam', agg='sum')
+
+    # ----- 5. RAPOR ORANI -----
+    df_rapor = pd.read_excel(uploaded_file, sheet_name='rapor_oran', header=0)
+    df_rapor = clean_columns(df_rapor)
+    month_cols = get_month_cols(df_rapor)
+    df_rapor['Şirket'] = df_rapor.iloc[:, 0].apply(normalize_company_name)
+    df_rapor = clean_numeric_df(df_rapor.set_index('Şirket')[month_cols])
+
+    # ----- 6. ÇALIŞAN SAYISI -----
+    df_calisan = pd.read_excel(uploaded_file, sheet_name='calisan.sayisi', header=0)
+    df_calisan = clean_columns(df_calisan)
+    month_cols = get_month_cols(df_calisan)
+    df_calisan['Şirket'] = df_calisan.iloc[:, 0].apply(normalize_company_name)
+    df_calisan = clean_numeric_df(df_calisan.set_index('Şirket')[month_cols])
+
+    # ----- 7. NET KÖK ÜCRET -----
+    df_net = pd.read_excel(uploaded_file, sheet_name='kok.ucret', header=0)
+    df_net = clean_columns(df_net)
+    month_cols = get_month_cols(df_net)
+    df_net['Şirket'] = df_net.iloc[:, 0].apply(normalize_company_name)
+    df_net = clean_numeric_df(df_net.set_index('Şirket')[month_cols])
+
+    # ----- 8. İŞVEREN MALİYETİ -----
+    df_isv = pd.read_excel(uploaded_file, sheet_name='isveren.maliyet', header=0)
+    df_isv = clean_columns(df_isv)
+    month_cols = get_month_cols(df_isv)
+    df_isv['Şirket'] = df_isv.iloc[:, 0].apply(normalize_company_name)
+    df_isv = clean_numeric_df(df_isv.set_index('Şirket')[month_cols])
+
+    # ----- 9. FM SAAT -----
+    df_fm_saat = pd.read_excel(uploaded_file, sheet_name='fm.saat', header=0)
+    df_fm_saat = clean_columns(df_fm_saat)
+    month_cols = get_month_cols(df_fm_saat)
+    df_fm_saat['Şirket'] = df_fm_saat.iloc[:, 0].apply(normalize_company_name)
+    df_fm_saat = clean_numeric_df(df_fm_saat.set_index('Şirket')[month_cols])
+
+    # ----- 10. FM TL MALİYET -----
+    df_fm_tl = pd.read_excel(uploaded_file, sheet_name='fm.maliyet', header=0)
+    df_fm_tl = clean_columns(df_fm_tl)
+    month_cols = get_month_cols(df_fm_tl)
+    df_fm_tl['Şirket'] = df_fm_tl.iloc[:, 0].apply(normalize_company_name)
+    df_fm_tl = clean_numeric_df(df_fm_tl.set_index('Şirket')[month_cols])
+
+    # ----- 11. İZİN GÜN -----
+    df_izin_gun = pd.read_excel(uploaded_file, sheet_name='izin_gun', header=0)
+    df_izin_gun = clean_columns(df_izin_gun)
+    month_cols = get_month_cols(df_izin_gun)
+    df_izin_gun['Şirket'] = df_izin_gun.iloc[:, 0].apply(normalize_company_name)
+    df_izin_gun = clean_numeric_df(df_izin_gun.set_index('Şirket')[month_cols])
+
+    # ----- 12. İZİN ÜCRET -----
+    df_izin_ucret = pd.read_excel(uploaded_file, sheet_name='izin_ucret', header=0)
+    df_izin_ucret = clean_columns(df_izin_ucret)
+    month_cols = get_month_cols(df_izin_ucret)
+    df_izin_ucret['Şirket'] = df_izin_ucret.iloc[:, 0].apply(normalize_company_name)
+    df_izin_ucret = clean_numeric_df(df_izin_ucret.set_index('Şirket')[month_cols])
+
+    # ----- 13. KIDEM TAZMİNATI -----
+    df_kidem, kidem_totals = read_company_month_sheet(uploaded_file, 'kidem.tazminati', 'TOPLAM', agg='sum')
+
+    # ----- 14. İHBAR TAZMİNATI -----
+    df_ihbar, ihbar_totals = read_company_month_sheet(uploaded_file, 'ihbar.tazminati', 'TOPLAM', agg='sum')
+
+    # ----- 15. KİŞİ BAŞI ORTALAMA MAAŞ (aylık) - kisi.basi.ort sayfasındaki "Genel Kişi Başı Ortalama Maaş" satırı -----
+    df_kisi_basi, kisi_basi_genel = read_company_month_sheet(
+        uploaded_file, 'kisi.basi.ort', 'Genel Kişi Başı Ortalama Maaş', agg='mean'
+    )
+    # Yıllık Ortalama sütununu bul (şirket bazlı yıllık ortalama için)
+    yillik_ort_col = None
+    for col in df_kisi_basi.columns:
+        if str(col).strip().lower() in ('yıllık ortalama', 'yillik ortalama'):
+            yillik_ort_col = col
+            break
+
+    # ----- 16. gnl.kisi.basi.ort sayfasından Genel Kişi Başı Ortalama Maaş (kümülatif ortalama) -----
+    try:
+        df_gnl = pd.read_excel(uploaded_file, sheet_name='gnl.kisi.basi.ort', header=0)
+        df_gnl = clean_columns(df_gnl)
+        if len(df_gnl) > 0:
+            genel_satir = df_gnl.iloc[[0]]
+            gnl_kisi_basi_vals = {}
+            for m in MONTHS:
+                if m in genel_satir.columns:
+                    val = pd.to_numeric(genel_satir.iloc[0][m], errors='coerce')
+                    gnl_kisi_basi_vals[m] = val if pd.notna(val) else 0
+                else:
+                    gnl_kisi_basi_vals[m] = 0
+        else:
+            gnl_kisi_basi_vals = {m: 0 for m in MONTHS}
+    except Exception:
+        gnl_kisi_basi_vals = {m: 0 for m in MONTHS}
+
+    # ----- 17. KADIN ORANI -----
+    df_kadin, kadin_genel = read_company_month_sheet(uploaded_file, 'kadin.erkek', 'Genel Kadın Oranı', agg='mean')
+
+    # ----- 18. İLK 6 AY AYRILMA ORANI -----
+    df_ilk6ay, ilk6ay_ortalama = read_company_month_sheet(uploaded_file, 'ilk.6ay', '__YOK__', agg='mean')
+
+    # ----- 19. AY İÇİ GİRİŞ -----
+    df_giris, giris_toplam = read_company_month_sheet(uploaded_file, 'aylik.giris', '__YOK__', agg='sum')
+
+    # ----- 20. AY İÇİ ÇIKIŞ -----
+    df_cikis, cikis_toplam = read_company_month_sheet(uploaded_file, 'aylik.cikis', '__YOK__', agg='sum')
+
+    # ----- TOPLAM SATIRLARI (rapor_oran, calisan.sayisi, izin_gun, izin_ucret) -----
+    genel_rapor = safe_read_son(uploaded_file, 'rapor_oran', 7)
+    toplam_calisan = safe_read_son(uploaded_file, 'calisan.sayisi', 7)
+    toplam_izin_gun = safe_read_son(uploaded_file, 'izin_gun', 7)
+    toplam_izin_ucret = safe_read_son(uploaded_file, 'izin_ucret', 7)
+
+    # ----- FM YAPAN LİSTESİ -----
+    df_fm_yapan = pd.read_excel(uploaded_file, sheet_name='aylik.fm.yapan', header=0)
+    df_fm_yapan = clean_columns(df_fm_yapan)
+    if 'Şirket' in df_fm_yapan.columns:
+        df_fm_yapan['Şirket'] = df_fm_yapan['Şirket'].apply(normalize_company_name)
+    for m in get_month_cols(df_fm_yapan):
+        df_fm_yapan[m] = pd.to_numeric(df_fm_yapan[m], errors='coerce').fillna(0)
+
+    # ----- VERİYİ BİRLEŞTİR -----
+    data = {}
+    for idx, m in enumerate(MONTHS):
+        comp_data = {}
+        for comp in COMPANIES:
+            if comp in df_calisan.index:
+                comp_data[comp] = {
+                    'employees': df_calisan.loc[comp, m],
+                    'devamsizlik': df_rapor.loc[comp, m] * 100,
+                    'turnoverKumulatif': df_gt.loc[comp, m] * 100 if comp in df_gt.index else 0,
+                    'turnoverGonulluKumulatif': df_gon.loc[comp, m] * 100 if comp in df_gon.index else 0,
+                    'turnoverAylik': df_aylik_gt.loc[comp, m] * 100 if comp in df_aylik_gt.index else 0,
+                    'turnoverGonulluAylik': df_aylik_gon.loc[comp, m] * 100 if comp in df_aylik_gon.index else 0,
+                    'netKokUcret': df_net.loc[comp, m],
+                    'isverenMaliyet': df_isv.loc[comp, m],
+                    'fmSaat': df_fm_saat.loc[comp, m],
+                    'fmTlMaliyet': df_fm_tl.loc[comp, m],
+                    'izinGun': df_izin_gun.loc[comp, m],
+                    'izinUcret': df_izin_ucret.loc[comp, m],
+                    'kisiBasiOrt': df_kisi_basi.loc[comp, m] if comp in df_kisi_basi.index and m in df_kisi_basi.columns else 0,
+                    'yillikOrtMaas': (df_kisi_basi.loc[comp, yillik_ort_col]
+                                      if yillik_ort_col is not None and comp in df_kisi_basi.index else 0),
+                    'kadinOrani': df_kadin.loc[comp, m] * 100 if comp in df_kadin.index and m in df_kadin.columns else 0,
+                    'ilk6ayOrani': df_ilk6ay.loc[comp, m] * 100 if comp in df_ilk6ay.index and m in df_ilk6ay.columns else 0,
+                    'aySekiceGiris': df_giris.loc[comp, m] if comp in df_giris.index and m in df_giris.columns else 0,
+                    'aySekiceCikis': df_cikis.loc[comp, m] if comp in df_cikis.index and m in df_cikis.columns else 0,
+                }
+            else:
+                comp_data[comp] = {key: 0 for key in ['employees', 'devamsizlik', 'turnoverKumulatif', 'turnoverGonulluKumulatif',
+                                                      'turnoverAylik', 'turnoverGonulluAylik', 'netKokUcret',
+                                                      'isverenMaliyet', 'fmSaat', 'fmTlMaliyet', 'izinGun', 'izinUcret',
+                                                      'kisiBasiOrt', 'yillikOrtMaas', 'kadinOrani', 'ilk6ayOrani',
+                                                      'aySekiceGiris', 'aySekiceCikis']}
+
+        # Genel toplamlar (sayfa son satırları)
+        sheet_calisan = toplam_calisan[idx] if idx < len(toplam_calisan) else 0
+        sheet_rapor = genel_rapor[idx] * 100 if idx < len(genel_rapor) else 0
+        sheet_izin_gun = toplam_izin_gun[idx] if idx < len(toplam_izin_gun) else 0
+        sheet_izin_ucret = toplam_izin_ucret[idx] if idx < len(toplam_izin_ucret) else 0
+
+        calc_calisan = sum(v['employees'] for v in comp_data.values())
+        calc_rapor = sum(v['devamsizlik'] for v in comp_data.values()) / len(COMPANIES)
+        calc_izin_gun = sum(v['izinGun'] for v in comp_data.values())
+        calc_izin_ucret = sum(v['izinUcret'] for v in comp_data.values())
+
+        # Turnover genel toplamlar (kümülatif ve aylık)
+        genel_kumulatif_turnover = gt_monthly_totals.get(m, 0) * 100
+        genel_kumulatif_gonullu = gon_monthly_totals.get(m, 0) * 100
+        genel_aylik_turnover = aylik_gt_totals.get(m, 0) * 100
+        genel_aylik_gonullu = aylik_gon_totals.get(m, 0) * 100
+
+        data[m] = {
+            'companies': comp_data,
+            'genelRaporOran': sheet_rapor if sheet_rapor else calc_rapor,
+            'toplamCalisan': sheet_calisan if sheet_calisan else calc_calisan,
+            'toplamIzinGun': sheet_izin_gun if sheet_izin_gun else calc_izin_gun,
+            'toplamIzinUcret': sheet_izin_ucret if sheet_izin_ucret else calc_izin_ucret,
+            'kidemTazminati': kidem_totals.get(m, 0),
+            'ihbarTazminati': ihbar_totals.get(m, 0),
+            'kisiBasiOrtGenel': kisi_basi_genel.get(m, 0),
+            'kisiBasiOrtGenelKumulatif': gnl_kisi_basi_vals.get(m, 0),
+            'kadinOraniGenel': kadin_genel.get(m, 0) * 100,
+            'ilk6ayOraniGenel': ilk6ay_ortalama.get(m, 0) * 100,
+            'girisToplam': giris_toplam.get(m, 0),
+            'cikisToplam': cikis_toplam.get(m, 0),
+            'genelKumulatifTurnover': genel_kumulatif_turnover,
+            'genelKumulatifGonullu': genel_kumulatif_gonullu,
+            'genelAylikTurnover': genel_aylik_turnover,
+            'genelAylikGonullu': genel_aylik_gonullu,
+        }
+
+    # Şirket bazlı toplam turnover (kümülatif son sütun)
+    df_gt_total = pd.read_excel(uploaded_file, sheet_name='genel.turnover', header=0)
+    df_gt_total = clean_columns(df_gt_total)
+    total_col = None
+    for col in df_gt_total.columns:
+        if 'toplam' in str(col).lower():
+            total_col = col
+            break
+    if total_col is None:
+        total_col = df_gt_total.columns[-1]
+    df_gt_total['Şirket'] = df_gt_total.iloc[:, 0].apply(normalize_company_name)
+    df_gt_total = df_gt_total.set_index('Şirket')
+    turnover_sirket_toplam = df_gt_total[~df_gt_total.index.isna()][total_col] * 100
+
+    df_gon_total = pd.read_excel(uploaded_file, sheet_name='gonullu.turnover', header=0)
+    df_gon_total = clean_columns(df_gon_total)
+    total_col_gon = None
+    for col in df_gon_total.columns:
+        if 'toplam' in str(col).lower():
+            total_col_gon = col
+            break
+    if total_col_gon is None:
+        total_col_gon = df_gon_total.columns[-1]
+    df_gon_total['Şirket'] = df_gon_total.iloc[:, 0].apply(normalize_company_name)
+    df_gon_total = df_gon_total.set_index('Şirket')
+    turnover_sirket_gonullu = df_gon_total[~df_gon_total.index.isna()][total_col_gon] * 100
+
+    turnover_sirket_bazli = pd.DataFrame({
+        'Toplam': [turnover_sirket_toplam.get(c, 0) for c in COMPANIES],
+        'Gönüllü': [turnover_sirket_gonullu.get(c, 0) for c in COMPANIES]
+    }, index=COMPANIES)
+
+    return {
+        'by_month': data,
+        'fm_yapan': df_fm_yapan,
+        'turnoverSirketBazli': turnover_sirket_bazli,
+    }
+
+
 def main():
     st.title("📊 İK Konsolide Dashboard")
 
@@ -103,7 +510,6 @@ def main():
     diff = calc_diff(cur, prev)
     col10.metric("📨 İhbar Tazminatı (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
-    # KPI 11: Kişi Başı Ortalama Maaş - gnl.kisi.basi.ort sayfasından (kümülatif ortalama)
     cur = round(month_data['kisiBasiOrtGenelKumulatif'], 2)
     prev = round(prev_data['kisiBasiOrtGenelKumulatif'], 2) if prev_data else None
     diff = calc_diff(cur, prev)
@@ -386,7 +792,7 @@ def main():
         'FM (Net TL)': format_tl(total_fm_tl),
         'İzin Gün Bakiyesi': format_number(total_izin_gun, 1),
         'İzin Ücreti (Net TL)': format_tl(total_izin_ucret),
-        'Yıllık Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiOrtGenelKumulatif']),  # gnl.kisi.basi.ort değeri
+        'Yıllık Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiOrtGenelKumulatif']),
         'Ay İçi İşe Giren': format_number(month_data['girisToplam'], 0),
         'Ay İçi İşten Ayrılan': format_number(month_data['cikisToplam'], 0),
     }
@@ -394,3 +800,7 @@ def main():
 
     detail_df = pd.DataFrame(rows)
     st.dataframe(detail_df, use_container_width=True, hide_index=True)
+
+
+if __name__ == "__main__":
+    main()
