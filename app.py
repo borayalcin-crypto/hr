@@ -244,34 +244,39 @@ def load_data(_uploaded_file, cache_key=None):
     df_kisi_basi, kisi_basi_genel = read_company_month_sheet(
         uploaded_file, 'kisi.basi.ort', 'Genel Kişi Başı Ortalama Maaş', agg='mean'
     )
-    # Yıllık Ortalama sütununu bul
+    # Yıllık Ortalama sütununu bul (şirket bazlı yıllık ortalama için)
     yillik_ort_col = None
     for col in df_kisi_basi.columns:
         if str(col).strip().lower() in ('yıllık ortalama', 'yillik ortalama'):
             yillik_ort_col = col
             break
 
-    # Genel Kişi Başı Yıllık Ortalama Maaş'ı ayrıca oku
-    df_kisi_basi_yillik = pd.read_excel(uploaded_file, sheet_name='kisi.basi.ort', header=0)
-    df_kisi_basi_yillik = clean_columns(df_kisi_basi_yillik)
-    # "Genel Kişi Başı Ortalama Maaş" satırını bul
-    genel_satir = df_kisi_basi_yillik[df_kisi_basi_yillik.iloc[:, 0].astype(str).str.strip().str.upper() == 'GENEL KİŞİ BAŞI ORTALAMA MAAŞ']
-    genel_yillik_ort = 0
-    if not genel_satir.empty and yillik_ort_col is not None and yillik_ort_col in genel_satir.columns:
-        genel_yillik_ort = pd.to_numeric(genel_satir.iloc[0][yillik_ort_col], errors='coerce')
-        if pd.isna(genel_yillik_ort):
-            genel_yillik_ort = 0
+    # ----- 16. GENEL KİŞİ BAŞI ORTALAMA MAAŞ (gnl.kisi.basi.ort sayfasından) -----
+    try:
+        df_gnl_kisi_basi = pd.read_excel(uploaded_file, sheet_name='gnl.kisi.basi.ort', header=0)
+        df_gnl_kisi_basi = clean_columns(df_gnl_kisi_basi)
+        month_cols = get_month_cols(df_gnl_kisi_basi)
+        # "Genel Kişi Başı Ortalama Maaş" satırını bul
+        genel_satir = df_gnl_kisi_basi[df_gnl_kisi_basi.iloc[:, 0].astype(str).str.strip().str.upper() == 'GENEL KİŞİ BAŞI ORTALAMA MAAŞ']
+        if not genel_satir.empty:
+            gnl_kisi_basi_values = genel_satir.iloc[0][month_cols].values
+            # Bu değerler kümülatif ortalama olduğu için, her ay için ayrı ayrı
+            gnl_kisi_basi_totals = {m: val for m, val in zip(month_cols, gnl_kisi_basi_values)}
+        else:
+            gnl_kisi_basi_totals = {}
+    except:
+        gnl_kisi_basi_totals = {}
 
-    # ----- 16. KADIN ORANI -----
+    # ----- 17. KADIN ORANI -----
     df_kadin, kadin_genel = read_company_month_sheet(uploaded_file, 'kadin.erkek', 'Genel Kadın Oranı', agg='mean')
 
-    # ----- 17. İLK 6 AY AYRILMA ORANI -----
+    # ----- 18. İLK 6 AY AYRILMA ORANI -----
     df_ilk6ay, ilk6ay_ortalama = read_company_month_sheet(uploaded_file, 'ilk.6ay', '__YOK__', agg='mean')
 
-    # ----- 18. AY İÇİ GİRİŞ -----
+    # ----- 19. AY İÇİ GİRİŞ -----
     df_giris, giris_toplam = read_company_month_sheet(uploaded_file, 'aylik.giris', '__YOK__', agg='sum')
 
-    # ----- 19. AY İÇİ ÇIKIŞ -----
+    # ----- 20. AY İÇİ ÇIKIŞ -----
     df_cikis, cikis_toplam = read_company_month_sheet(uploaded_file, 'aylik.cikis', '__YOK__', agg='sum')
 
     # ----- TOPLAM SATIRLARI (rapor_oran, calisan.sayisi, izin_gun, izin_ucret) -----
@@ -347,8 +352,7 @@ def load_data(_uploaded_file, cache_key=None):
             'toplamIzinUcret': sheet_izin_ucret if sheet_izin_ucret else calc_izin_ucret,
             'kidemTazminati': kidem_totals.get(m, 0),
             'ihbarTazminati': ihbar_totals.get(m, 0),
-            'kisiBasiOrtGenel': kisi_basi_genel.get(m, 0),
-            'kisiBasiYillikOrtGenel': genel_yillik_ort,  # yıllık ortalama (sabit)
+            'kisiBasiOrtGenel': gnl_kisi_basi_totals.get(m, 0),  # gnl.kisi.basi.ort sayfasından
             'kadinOraniGenel': kadin_genel.get(m, 0) * 100,
             'ilk6ayOraniGenel': ilk6ay_ortalama.get(m, 0) * 100,
             'girisToplam': giris_toplam.get(m, 0),
@@ -503,10 +507,11 @@ def main():
     diff = calc_diff(cur, prev)
     col10.metric("📨 İhbar Tazminatı (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
-    cur = round(month_data['kisiBasiYillikOrtGenel'], 2)
-    prev = round(prev_data['kisiBasiYillikOrtGenel'], 2) if prev_data else None
+    # KPI 11: Kişi Başı Ortalama Maaş (gnl.kisi.basi.ort sayfasından)
+    cur = round(month_data['kisiBasiOrtGenel'], 2)
+    prev = round(prev_data['kisiBasiOrtGenel'], 2) if prev_data else None
     diff = calc_diff(cur, prev)
-    col11.metric("🧮 Yıllık Kişi Başı Ort. Maaş (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
+    col11.metric("🧮 Kişi Başı Ort. Maaş (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
     # ----- KPI KARTLARI (3. satır) -----
     col12, col13, col14, col15, col16, col17 = st.columns(6)
@@ -528,7 +533,7 @@ def main():
 
     st.markdown("---")
 
-    # ----- GRAFİKLER -----
+    # ----- GRAFİKLER (Sıralama: Çalışan, Küm. Turnover, Aylık Turnover, Raporlu Oran, FM Saat, İzin Gün, İzin Ücreti, Kadın Oranı, Giriş/Çıkış) -----
     # 1. Satır: Çalışan Sayısı + Kümülatif Turnover
     col1, col2 = st.columns(2)
 
@@ -755,7 +760,7 @@ def main():
         'FM (Net TL)': format_tl(total_fm_tl),
         'İzin Gün Bakiyesi': format_number(total_izin_gun, 1),
         'İzin Ücreti (Net TL)': format_tl(total_izin_ucret),
-        'Yıllık Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiYillikOrtGenel']),
+        'Yıllık Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiOrtGenel']),  # toplam satırında gnl.kisi.basi.ort değeri
         'Ay İçi İşe Giren': format_number(month_data['girisToplam'], 0),
         'Ay İçi İşten Ayrılan': format_number(month_data['cikisToplam'], 0),
     }
