@@ -222,20 +222,48 @@ def read_company_month_sheet(uploaded_file, sheet_name, total_label, agg='sum', 
 def load_data(_uploaded_file, cache_key=None):
     uploaded_file = _uploaded_file
     # 1. Genel Turnover
-    df_gt = pd.read_excel(uploaded_file, sheet_name='genel.turnover', header=0)
-    df_gt = clean_columns(df_gt)
-    month_cols = get_month_cols(df_gt)
+    df_gt_raw = pd.read_excel(uploaded_file, sheet_name='genel.turnover', header=0)
+    df_gt_raw = clean_columns(df_gt_raw)
+    month_cols = get_month_cols(df_gt_raw)
     if not month_cols:
         raise ValueError("genel.turnover sayfasında ay sütunları bulunamadı.")
-    df_gt['Şirket'] = df_gt.iloc[:, 0].apply(normalize_company_name)
-    df_gt = clean_numeric_df(df_gt.set_index('Şirket')[month_cols])
+    first_col = df_gt_raw.columns[0]
+    extra_cols = [c for c in df_gt_raw.columns if c not in month_cols and c != first_col]
+    df_gt_raw[first_col] = df_gt_raw[first_col].apply(normalize_company_name)
+    df_gt_raw = df_gt_raw.set_index(first_col)
+
+    gt_total_col = extra_cols[0] if extra_cols else None
+    is_overall_row = df_gt_raw.index.isna()
+    if gt_total_col is not None:
+        genel_turnover_overall = df_gt_raw.loc[is_overall_row, gt_total_col]
+        genel_turnover_overall = genel_turnover_overall.iloc[0] if len(genel_turnover_overall) else 0
+        df_gt_sirket_toplam = clean_numeric_df(df_gt_raw.loc[~is_overall_row, [gt_total_col]])
+        df_gt_sirket_toplam.columns = ['Toplam']
+    else:
+        genel_turnover_overall = 0
+        df_gt_sirket_toplam = pd.DataFrame({'Toplam': []})
+    df_gt = clean_numeric_df(df_gt_raw.loc[~is_overall_row, month_cols])
 
     # 2. Gönüllü Turnover
-    df_gon = pd.read_excel(uploaded_file, sheet_name='gonullu.turnover', header=0)
-    df_gon = clean_columns(df_gon)
-    month_cols = get_month_cols(df_gon)
-    df_gon['Şirket'] = df_gon.iloc[:, 0].apply(normalize_company_name)
-    df_gon = clean_numeric_df(df_gon.set_index('Şirket')[month_cols])
+    df_gon_raw = pd.read_excel(uploaded_file, sheet_name='gonullu.turnover', header=0)
+    df_gon_raw = clean_columns(df_gon_raw)
+    month_cols = get_month_cols(df_gon_raw)
+    first_col = df_gon_raw.columns[0]
+    extra_cols = [c for c in df_gon_raw.columns if c not in month_cols and c != first_col]
+    df_gon_raw[first_col] = df_gon_raw[first_col].apply(normalize_company_name)
+    df_gon_raw = df_gon_raw.set_index(first_col)
+
+    gon_total_col = extra_cols[0] if extra_cols else None
+    is_overall_row = df_gon_raw.index.isna()
+    if gon_total_col is not None:
+        gonullu_turnover_overall = df_gon_raw.loc[is_overall_row, gon_total_col]
+        gonullu_turnover_overall = gonullu_turnover_overall.iloc[0] if len(gonullu_turnover_overall) else 0
+        df_gon_sirket_toplam = clean_numeric_df(df_gon_raw.loc[~is_overall_row, [gon_total_col]])
+        df_gon_sirket_toplam.columns = ['Gönüllü']
+    else:
+        gonullu_turnover_overall = 0
+        df_gon_sirket_toplam = pd.DataFrame({'Gönüllü': []})
+    df_gon = clean_numeric_df(df_gon_raw.loc[~is_overall_row, month_cols])
 
     # 3. Rapor Oranı
     df_rapor = pd.read_excel(uploaded_file, sheet_name='rapor_oran', header=0)
@@ -396,9 +424,23 @@ def load_data(_uploaded_file, cache_key=None):
             'cikisToplam': cikis_toplam.get(m, 0),
         }
 
+    # Şirket bazlı toplam turnover (Toplam & Gönüllü) - tek tabloda birleştir
+    turnover_sirket_bazli = pd.DataFrame(index=COMPANIES)
+    turnover_sirket_bazli['Toplam'] = [
+        df_gt_sirket_toplam['Toplam'].get(c, 0) * 100 if c in df_gt_sirket_toplam.index else 0
+        for c in COMPANIES
+    ]
+    turnover_sirket_bazli['Gönüllü'] = [
+        df_gon_sirket_toplam['Gönüllü'].get(c, 0) * 100 if c in df_gon_sirket_toplam.index else 0
+        for c in COMPANIES
+    ]
+
     return {
         'by_month': data,
         'fm_yapan': df_fm_yapan,
+        'genelTurnoverOverall': genel_turnover_overall * 100,
+        'gonulluTurnoverOverall': gonullu_turnover_overall * 100,
+        'turnoverSirketBazli': turnover_sirket_bazli,
     }
 
 
@@ -447,6 +489,7 @@ def main():
 
     data = all_data['by_month']
     fm_yapan_df = all_data['fm_yapan']
+    turnover_sirket_bazli = all_data['turnoverSirketBazli']
 
     selected_month = st.selectbox("📅 Ay Seçin", MONTHS, index=len(MONTHS) - 1)
     month_idx = MONTHS.index(selected_month)
@@ -528,31 +571,37 @@ def main():
     col11.metric("🧮 Kişi Başı Ort. Maaş (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
     # ----- KPI KARTLARI (3. satır) -----
-    col12, col13, col14, col15 = st.columns(4)
+    col12, col13, col14, col15, col16, col17 = st.columns(6)
 
-    # 12. Genel Kadın Oranı
+    # 12. Genel Turnover Oranı (dönem toplamı, aya bağlı değil)
+    col12.metric("🔄 Genel Turnover Oranı", format_percent(all_data['genelTurnoverOverall']))
+
+    # 13. Gönüllü Turnover (dönem toplamı, aya bağlı değil)
+    col13.metric("🚪 Gönüllü Turnover", format_percent(all_data['gonulluTurnoverOverall']))
+
+    # 14. Genel Kadın Oranı
     cur = month_data['kadinOraniGenel']
     prev = prev_data['kadinOraniGenel'] if prev_data else None
     diff = calc_diff(cur, prev)
-    col12.metric("👩 Kadın Oranı", format_percent(cur), delta=format_delta_percent(diff))
+    col14.metric("👩 Kadın Oranı", format_percent(cur), delta=format_delta_percent(diff))
 
-    # 13. İlk 6 Ay İşten Ayrılma Oranı
+    # 15. İlk 6 Ay İşten Ayrılma Oranı
     cur = month_data['ilk6ayOraniGenel']
     prev = prev_data['ilk6ayOraniGenel'] if prev_data else None
     diff = calc_diff(cur, prev)
-    col13.metric("⏳ İlk 6 Ay Ayrılma Oranı", format_percent(cur), delta=format_delta_percent(diff))
+    col15.metric("⏳ İlk 6 Ay Ayrılma Oranı", format_percent(cur), delta=format_delta_percent(diff))
 
-    # 14. Ay İçinde İşe Giren
+    # 16. Ay İçinde İşe Giren
     cur = round(month_data['girisToplam'], 2)
     prev = round(prev_data['girisToplam'], 2) if prev_data else None
     diff = calc_diff(cur, prev)
-    col14.metric("⬆️ Ay İçi İşe Giren", format_number(cur, 0), delta=format_delta_number(diff, 0))
+    col16.metric("⬆️ Ay İçi İşe Giren", format_number(cur, 0), delta=format_delta_number(diff, 0))
 
-    # 15. Ay İçinde İşten Ayrılan
+    # 17. Ay İçinde İşten Ayrılan
     cur = round(month_data['cikisToplam'], 2)
     prev = round(prev_data['cikisToplam'], 2) if prev_data else None
     diff = calc_diff(cur, prev)
-    col15.metric("⬇️ Ay İçi İşten Ayrılan", format_number(cur, 0), delta=format_delta_number(diff, 0))
+    col17.metric("⬇️ Ay İçi İşten Ayrılan", format_number(cur, 0), delta=format_delta_number(diff, 0))
 
     st.markdown("---")
 
@@ -591,6 +640,22 @@ def main():
         fig2.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
                             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
         st.plotly_chart(fig2, use_container_width=True)
+
+    st.subheader("📈 Şirket Bazlı Toplam Turnover (Ocak–Ağustos Dönemi)")
+    fig2b = go.Figure()
+    fig2b.add_trace(go.Bar(x=COMPANIES, y=turnover_sirket_bazli['Toplam'], name='Toplam Turnover',
+                            marker_color='#f59e0b',
+                            text=turnover_sirket_bazli['Toplam'].apply(format_percent),
+                            textposition='outside'))
+    fig2b.add_trace(go.Bar(x=COMPANIES, y=turnover_sirket_bazli['Gönüllü'], name='Gönüllü Turnover',
+                            marker_color='#ec4899',
+                            text=turnover_sirket_bazli['Gönüllü'].apply(format_percent),
+                            textposition='outside'))
+    fig2b.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
+                         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+    st.plotly_chart(fig2b, use_container_width=True)
+
+    st.markdown("---")
 
     col3, col4 = st.columns(2)
 
