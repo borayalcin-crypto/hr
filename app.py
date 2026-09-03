@@ -157,6 +157,12 @@ def get_month_cols(df):
                 break
     return month_cols
 
+def clean_numeric_df(df):
+    """Ay sütunlarındaki boş/okunamayan hücreleri 0'a çevirir.
+    (Python'un yerleşik sum() fonksiyonu NaN gördüğünde tüm toplamı NaN yapar;
+    bu yüzden Excel'de boş bırakılmış hücreler KPI toplamlarını bozabiliyordu.)"""
+    return df.apply(pd.to_numeric, errors='coerce').fillna(0)
+
 def read_sheet_flexible(uploaded_file, candidates, **kwargs):
     """Birden fazla olası sayfa adından ilk bulunanı okur (sayfa adı dosyalar arasında değişmiş olabilir)."""
     last_err = None
@@ -222,70 +228,70 @@ def load_data(_uploaded_file, cache_key=None):
     if not month_cols:
         raise ValueError("genel.turnover sayfasında ay sütunları bulunamadı.")
     df_gt['Şirket'] = df_gt.iloc[:, 0].apply(normalize_company_name)
-    df_gt = df_gt.set_index('Şirket')[month_cols]
+    df_gt = clean_numeric_df(df_gt.set_index('Şirket')[month_cols])
 
     # 2. Gönüllü Turnover
     df_gon = pd.read_excel(uploaded_file, sheet_name='gonullu.turnover', header=0)
     df_gon = clean_columns(df_gon)
     month_cols = get_month_cols(df_gon)
     df_gon['Şirket'] = df_gon.iloc[:, 0].apply(normalize_company_name)
-    df_gon = df_gon.set_index('Şirket')[month_cols]
+    df_gon = clean_numeric_df(df_gon.set_index('Şirket')[month_cols])
 
     # 3. Rapor Oranı
     df_rapor = pd.read_excel(uploaded_file, sheet_name='rapor_oran', header=0)
     df_rapor = clean_columns(df_rapor)
     month_cols = get_month_cols(df_rapor)
     df_rapor['Şirket'] = df_rapor.iloc[:, 0].apply(normalize_company_name)
-    df_rapor = df_rapor.set_index('Şirket')[month_cols]
+    df_rapor = clean_numeric_df(df_rapor.set_index('Şirket')[month_cols])
 
     # 4. Çalışan Sayısı
     df_calisan = pd.read_excel(uploaded_file, sheet_name='calisan.sayisi', header=0)
     df_calisan = clean_columns(df_calisan)
     month_cols = get_month_cols(df_calisan)
     df_calisan['Şirket'] = df_calisan.iloc[:, 0].apply(normalize_company_name)
-    df_calisan = df_calisan.set_index('Şirket')[month_cols]
+    df_calisan = clean_numeric_df(df_calisan.set_index('Şirket')[month_cols])
 
     # 5. Net Kök Ücret
     df_net = read_sheet_flexible(uploaded_file, ['kok.ucret', 'maliyet'], header=0)
     df_net = clean_columns(df_net)
     month_cols = get_month_cols(df_net)
     df_net['Şirket'] = df_net.iloc[:, 0].apply(normalize_company_name)
-    df_net = df_net.set_index('Şirket')[month_cols]
+    df_net = clean_numeric_df(df_net.set_index('Şirket')[month_cols])
 
     # 6. İşveren Maliyeti
     df_isv = pd.read_excel(uploaded_file, sheet_name='isveren.maliyet', header=0)
     df_isv = clean_columns(df_isv)
     month_cols = get_month_cols(df_isv)
     df_isv['Şirket'] = df_isv.iloc[:, 0].apply(normalize_company_name)
-    df_isv = df_isv.set_index('Şirket')[month_cols]
+    df_isv = clean_numeric_df(df_isv.set_index('Şirket')[month_cols])
 
     # 7. FM Saat
     df_fm_saat = pd.read_excel(uploaded_file, sheet_name='fm.saat', header=0)
     df_fm_saat = clean_columns(df_fm_saat)
     month_cols = get_month_cols(df_fm_saat)
     df_fm_saat['Şirket'] = df_fm_saat.iloc[:, 0].apply(normalize_company_name)
-    df_fm_saat = df_fm_saat.set_index('Şirket')[month_cols]
+    df_fm_saat = clean_numeric_df(df_fm_saat.set_index('Şirket')[month_cols])
 
     # 8. FM TL Maliyet
     df_fm_tl = pd.read_excel(uploaded_file, sheet_name='fm.maliyet', header=0)
     df_fm_tl = clean_columns(df_fm_tl)
     month_cols = get_month_cols(df_fm_tl)
     df_fm_tl['Şirket'] = df_fm_tl.iloc[:, 0].apply(normalize_company_name)
-    df_fm_tl = df_fm_tl.set_index('Şirket')[month_cols]
+    df_fm_tl = clean_numeric_df(df_fm_tl.set_index('Şirket')[month_cols])
 
     # 9. İzin Gün
     df_izin_gun = pd.read_excel(uploaded_file, sheet_name='izin_gun', header=0)
     df_izin_gun = clean_columns(df_izin_gun)
     month_cols = get_month_cols(df_izin_gun)
     df_izin_gun['Şirket'] = df_izin_gun.iloc[:, 0].apply(normalize_company_name)
-    df_izin_gun = df_izin_gun.set_index('Şirket')[month_cols]
+    df_izin_gun = clean_numeric_df(df_izin_gun.set_index('Şirket')[month_cols])
 
     # 10. İzin Ücreti
     df_izin_ucret = pd.read_excel(uploaded_file, sheet_name='izin_ucret', header=0)
     df_izin_ucret = clean_columns(df_izin_ucret)
     month_cols = get_month_cols(df_izin_ucret)
     df_izin_ucret['Şirket'] = df_izin_ucret.iloc[:, 0].apply(normalize_company_name)
-    df_izin_ucret = df_izin_ucret.set_index('Şirket')[month_cols]
+    df_izin_ucret = clean_numeric_df(df_izin_ucret.set_index('Şirket')[month_cols])
 
     # ----- TOPLAM SATIRLARI (skiprows 7 ile, sayfada varsa) -----
     genel_rapor = safe_read_son(uploaded_file, 'rapor_oran', 7)
@@ -686,6 +692,8 @@ def main():
             'İzin Ücreti (Net TL)': format_tl(d['izinUcret']),
             'Kişi Başı Ort. Maaş (Net TL)': format_tl(d['kisiBasiOrt']),
             'Yıllık Ort. Maaş (Net TL)': format_tl(d['yillikOrtMaas']),
+            'Ay İçi İşe Giren': format_number(d['aySekiceGiris'], 0),
+            'Ay İçi İşten Ayrılan': format_number(d['aySekiceCikis'], 0),
         })
 
     # Toplam satırı
@@ -715,6 +723,8 @@ def main():
         'İzin Ücreti (Net TL)': format_tl(total_izin_ucret),
         'Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiOrtGenel']),
         'Yıllık Ort. Maaş (Net TL)': format_tl(total_yillik_ort),
+        'Ay İçi İşe Giren': format_number(month_data['girisToplam'], 0),
+        'Ay İçi İşten Ayrılan': format_number(month_data['cikisToplam'], 0),
     }
     rows.append(total_row)
 
