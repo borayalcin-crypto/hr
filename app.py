@@ -240,15 +240,27 @@ def load_data(_uploaded_file, cache_key=None):
     # ----- 14. İHBAR TAZMİNATI -----
     df_ihbar, ihbar_totals = read_company_month_sheet(uploaded_file, 'ihbar.tazminati', 'TOPLAM', agg='sum')
 
-    # ----- 15. KİŞİ BAŞI ORTALAMA MAAŞ -----
+    # ----- 15. KİŞİ BAŞI ORTALAMA MAAŞ (aylık ve yıllık) -----
     df_kisi_basi, kisi_basi_genel = read_company_month_sheet(
         uploaded_file, 'kisi.basi.ort', 'Genel Kişi Başı Ortalama Maaş', agg='mean'
     )
+    # Yıllık Ortalama sütununu bul
     yillik_ort_col = None
     for col in df_kisi_basi.columns:
         if str(col).strip().lower() in ('yıllık ortalama', 'yillik ortalama'):
             yillik_ort_col = col
             break
+
+    # Genel Kişi Başı Yıllık Ortalama Maaş'ı ayrıca oku
+    df_kisi_basi_yillik = pd.read_excel(uploaded_file, sheet_name='kisi.basi.ort', header=0)
+    df_kisi_basi_yillik = clean_columns(df_kisi_basi_yillik)
+    # "Genel Kişi Başı Ortalama Maaş" satırını bul
+    genel_satir = df_kisi_basi_yillik[df_kisi_basi_yillik.iloc[:, 0].astype(str).str.strip().str.upper() == 'GENEL KİŞİ BAŞI ORTALAMA MAAŞ']
+    genel_yillik_ort = 0
+    if not genel_satir.empty and yillik_ort_col is not None and yillik_ort_col in genel_satir.columns:
+        genel_yillik_ort = pd.to_numeric(genel_satir.iloc[0][yillik_ort_col], errors='coerce')
+        if pd.isna(genel_yillik_ort):
+            genel_yillik_ort = 0
 
     # ----- 16. KADIN ORANI -----
     df_kadin, kadin_genel = read_company_month_sheet(uploaded_file, 'kadin.erkek', 'Genel Kadın Oranı', agg='mean')
@@ -336,6 +348,7 @@ def load_data(_uploaded_file, cache_key=None):
             'kidemTazminati': kidem_totals.get(m, 0),
             'ihbarTazminati': ihbar_totals.get(m, 0),
             'kisiBasiOrtGenel': kisi_basi_genel.get(m, 0),
+            'kisiBasiYillikOrtGenel': genel_yillik_ort,  # yıllık ortalama (sabit)
             'kadinOraniGenel': kadin_genel.get(m, 0) * 100,
             'ilk6ayOraniGenel': ilk6ay_ortalama.get(m, 0) * 100,
             'girisToplam': giris_toplam.get(m, 0),
@@ -483,17 +496,17 @@ def main():
     cur = round(month_data['kidemTazminati'], 2)
     prev = round(prev_data['kidemTazminati'], 2) if prev_data else None
     diff = calc_diff(cur, prev)
-    col9.metric("🏷️ Kıdem Tazminatı", format_tl(cur), delta=format_delta_tl(diff))
+    col9.metric("🏷️ Kıdem Tazminatı (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
     cur = round(month_data['ihbarTazminati'], 2)
     prev = round(prev_data['ihbarTazminati'], 2) if prev_data else None
     diff = calc_diff(cur, prev)
-    col10.metric("📨 İhbar Tazminatı", format_tl(cur), delta=format_delta_tl(diff))
+    col10.metric("📨 İhbar Tazminatı (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
-    cur = round(month_data['kisiBasiOrtGenel'], 2)
-    prev = round(prev_data['kisiBasiOrtGenel'], 2) if prev_data else None
+    cur = round(month_data['kisiBasiYillikOrtGenel'], 2)
+    prev = round(prev_data['kisiBasiYillikOrtGenel'], 2) if prev_data else None
     diff = calc_diff(cur, prev)
-    col11.metric("🧮 Kişi Başı Ort. Maaş (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
+    col11.metric("🧮 Yıllık Kişi Başı Ort. Maaş (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
     # ----- KPI KARTLARI (3. satır) -----
     col12, col13, col14, col15, col16, col17 = st.columns(6)
@@ -516,21 +529,22 @@ def main():
     st.markdown("---")
 
     # ----- GRAFİKLER -----
-    # 1. Satır: Raporlu Oran & Kümülatif Turnover
+    # 1. Satır: Çalışan Sayısı + Kümülatif Turnover
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("📊 Raporlu Oran")
-        df_plot = pd.DataFrame({
+        st.subheader("👥 Şirket Bazında Çalışan Sayısı")
+        df_calisan_plot = pd.DataFrame({
             'Şirket': COMPANIES,
-            'Raporlu Oran %': [month_data['companies'][c]['devamsizlik'] for c in COMPANIES]
+            'Çalışan Sayısı': [month_data['companies'][c]['employees'] for c in COMPANIES]
         })
-        fig = px.bar(df_plot, x='Şirket', y='Raporlu Oran %', color='Raporlu Oran %',
-                     color_continuous_scale='Blues',
-                     text=df_plot['Raporlu Oran %'].apply(format_percent))
-        fig.update_traces(textposition='outside')
-        fig.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig, use_container_width=True)
+        fig_calisan = px.bar(df_calisan_plot, x='Şirket', y='Çalışan Sayısı', color='Çalışan Sayısı',
+                             color_continuous_scale='Greens',
+                             text=df_calisan_plot['Çalışan Sayısı'].apply(lambda x: format_number(x, 0)))
+        fig_calisan.update_traces(textposition='outside')
+        fig_calisan.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10),
+                                  xaxis_title="")
+        st.plotly_chart(fig_calisan, use_container_width=True)
 
     with col2:
         st.subheader("📈 Şirket Bazında Kümülatif Turnover")
@@ -547,10 +561,11 @@ def main():
                                  marker_color='#ec4899', text=df_kum['Küm. Gönüllü'].apply(format_percent),
                                  textposition='outside'))
         fig_kum.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
-                              legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+                              legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+                              xaxis_title="")
         st.plotly_chart(fig_kum, use_container_width=True)
 
-    # 2. Satır: Aylık Turnover & FM Saat
+    # 2. Satır: Aylık Turnover + Raporlu Oran
     col3, col4 = st.columns(2)
 
     with col3:
@@ -568,10 +583,28 @@ def main():
                                    marker_color='#8b5cf6', text=df_aylik['Aylık Gönüllü'].apply(format_percent),
                                    textposition='outside'))
         fig_aylik.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
-                                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+                                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+                                xaxis_title="")
         st.plotly_chart(fig_aylik, use_container_width=True)
 
     with col4:
+        st.subheader("📊 Raporlu Oran")
+        df_plot = pd.DataFrame({
+            'Şirket': COMPANIES,
+            'Raporlu Oran %': [month_data['companies'][c]['devamsizlik'] for c in COMPANIES]
+        })
+        fig_rapor = px.bar(df_plot, x='Şirket', y='Raporlu Oran %', color='Raporlu Oran %',
+                           color_continuous_scale='Blues',
+                           text=df_plot['Raporlu Oran %'].apply(format_percent))
+        fig_rapor.update_traces(textposition='outside')
+        fig_rapor.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10),
+                                xaxis_title="")
+        st.plotly_chart(fig_rapor, use_container_width=True)
+
+    # 3. Satır: FM Saat + İzin Gün
+    col5, col6 = st.columns(2)
+
+    with col5:
         st.subheader("⏱️ Şirket Bazında FM Saat")
         df_fm = pd.DataFrame({
             'Şirket': COMPANIES,
@@ -581,24 +614,9 @@ def main():
                         color_continuous_scale='Oranges',
                         text=df_fm['FM Saat'].apply(lambda x: format_number(x, 1)))
         fig_fm.update_traces(textposition='outside')
-        fig_fm.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        fig_fm.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis_title="")
         st.plotly_chart(fig_fm, use_container_width=True)
-
-    # 3. Satır: Çalışan Sayısı & İzin Gün
-    col5, col6 = st.columns(2)
-
-    with col5:
-        st.subheader("👥 Şirket Bazında Çalışan Sayısı")
-        df_calisan_plot = pd.DataFrame({
-            'Şirket': COMPANIES,
-            'Çalışan Sayısı': [month_data['companies'][c]['employees'] for c in COMPANIES]
-        })
-        fig_calisan = px.bar(df_calisan_plot, x='Şirket', y='Çalışan Sayısı', color='Çalışan Sayısı',
-                             color_continuous_scale='Greens',
-                             text=df_calisan_plot['Çalışan Sayısı'].apply(lambda x: format_number(x, 0)))
-        fig_calisan.update_traces(textposition='outside')
-        fig_calisan.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig_calisan, use_container_width=True)
 
     with col6:
         st.subheader("📅 İzin Gün Bakiyesi")
@@ -610,10 +628,11 @@ def main():
                           color_continuous_scale='Teal',
                           text=df_izin_gun['İzin Günü'].apply(lambda x: format_number(x, 1)))
         fig_izin.update_traces(textposition='outside')
-        fig_izin.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        fig_izin.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10),
+                               xaxis_title="")
         st.plotly_chart(fig_izin, use_container_width=True)
 
-    # 4. Satır: İzin Ücreti & Kadın Oranı
+    # 4. Satır: İzin Ücreti + Kadın Oranı
     col7, col8 = st.columns(2)
 
     with col7:
@@ -626,7 +645,8 @@ def main():
                            color_continuous_scale='Purples',
                            text=df_izin_ucret['İzin Ücreti (Net TL)'].apply(format_tl))
         fig_ucret.update_traces(textposition='outside')
-        fig_ucret.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        fig_ucret.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10),
+                                xaxis_title="")
         st.plotly_chart(fig_ucret, use_container_width=True)
 
     with col8:
@@ -639,10 +659,11 @@ def main():
                            color_continuous_scale='Magenta',
                            text=df_kadin_plot['Kadın Oranı %'].apply(format_percent))
         fig_kadin.update_traces(textposition='outside')
-        fig_kadin.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10))
+        fig_kadin.update_layout(showlegend=False, height=350, margin=dict(l=10, r=10, t=30, b=10),
+                                xaxis_title="")
         st.plotly_chart(fig_kadin, use_container_width=True)
 
-    # 5. Satır: Giriş/Çıkış & boş
+    # 5. Satır: Giriş/Çıkış
     col9, col10 = st.columns(2)
 
     with col9:
@@ -662,11 +683,11 @@ def main():
                                 text=df_gc['Çıkış'].apply(lambda x: format_number(x, 0)),
                                 textposition='outside'))
         fig_gc.update_layout(barmode='group', height=350, margin=dict(l=10, r=10, t=30, b=10),
-                             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
+                             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+                             xaxis_title="")
         st.plotly_chart(fig_gc, use_container_width=True)
 
     with col10:
-        # Boş alan, istenirse başka bir grafik eklenebilir
         st.empty()
 
     st.markdown("---")
@@ -706,8 +727,7 @@ def main():
             'FM (Net TL)': format_tl(d['fmTlMaliyet']),
             'İzin Gün Bakiyesi': format_number(d['izinGun'], 1),
             'İzin Ücreti (Net TL)': format_tl(d['izinUcret']),
-            'Kişi Başı Ort. Maaş (Net TL)': format_tl(d['kisiBasiOrt']),
-            'Yıllık Ort. Maaş (Net TL)': format_tl(d['yillikOrtMaas']),
+            'Yıllık Kişi Başı Ort. Maaş (Net TL)': format_tl(d['yillikOrtMaas']),
             'Ay İçi İşe Giren': format_number(d['aySekiceGiris'], 0),
             'Ay İçi İşten Ayrılan': format_number(d['aySekiceCikis'], 0),
         })
@@ -735,8 +755,7 @@ def main():
         'FM (Net TL)': format_tl(total_fm_tl),
         'İzin Gün Bakiyesi': format_number(total_izin_gun, 1),
         'İzin Ücreti (Net TL)': format_tl(total_izin_ucret),
-        'Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiOrtGenel']),
-        'Yıllık Ort. Maaş (Net TL)': format_tl(0),
+        'Yıllık Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiYillikOrtGenel']),
         'Ay İçi İşe Giren': format_number(month_data['girisToplam'], 0),
         'Ay İçi İşten Ayrılan': format_number(month_data['cikisToplam'], 0),
     }
