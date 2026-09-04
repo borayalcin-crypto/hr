@@ -516,7 +516,7 @@ def main():
     col11.metric("🧮 Kişi Başı Ort. Maaş (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
     # ----- KPI KARTLARI (3. satır) -----
-    col12, col13, col14, col15, col16, col17 = st.columns(6)
+    col12, col13, col14, col15, col16 = st.columns(5)  # 5 sütun oldu (ilk6ay kaldırıldı)
 
     col12.metric("🔄 Küm. Genel Turnover", format_percent(month_data['genelKumulatifTurnover']))
     col13.metric("🚪 Küm. Gönüllü Turnover", format_percent(month_data['genelKumulatifGonullu']))
@@ -527,11 +527,6 @@ def main():
     prev = prev_data['kadinOraniGenel'] if prev_data else None
     diff = calc_diff(cur, prev)
     col16.metric("👩 Kadın Oranı", format_percent(cur), delta=format_delta_percent(diff))
-
-    cur = month_data['ilk6ayOraniGenel']
-    prev = prev_data['ilk6ayOraniGenel'] if prev_data else None
-    diff = calc_diff(cur, prev)
-    col17.metric("⏳ İlk 6 Ay Ayrılma Oranı", format_percent(cur), delta=format_delta_percent(diff))
 
     st.markdown("---")
 
@@ -719,7 +714,10 @@ def main():
         },
         labels={'value': 'Turnover Oranı (%)', 'variable': ''}
     )
-    fig_trend.update_traces(textposition='top center')
+    fig_trend.update_traces(
+        texttemplate='%{y:.2f}%',
+        textposition='top center'
+    )
     fig_trend.update_layout(
         height=400,
         margin=dict(l=10, r=10, t=30, b=10),
@@ -765,6 +763,7 @@ def main():
             'İzin Gün Bakiyesi': format_number(d['izinGun'], 1),
             'İzin Ücreti (Net TL)': format_tl(d['izinUcret']),
             'Yıllık Kişi Başı Ort. Maaş (Net TL)': format_tl(d['yillikOrtMaas']),
+            'İlk 6 Ay Ayrılma Oranı': format_percent(d['ilk6ayOrani']),
             'Ay İçi İşe Giren': format_number(d['aySekiceGiris'], 0),
             'Ay İçi İşten Ayrılan': format_number(d['aySekiceCikis'], 0),
         })
@@ -793,6 +792,7 @@ def main():
         'İzin Gün Bakiyesi': format_number(total_izin_gun, 1),
         'İzin Ücreti (Net TL)': format_tl(total_izin_ucret),
         'Yıllık Kişi Başı Ort. Maaş (Net TL)': format_tl(month_data['kisiBasiOrtGenelKumulatif']),
+        'İlk 6 Ay Ayrılma Oranı': format_percent(month_data['ilk6ayOraniGenel']),
         'Ay İçi İşe Giren': format_number(month_data['girisToplam'], 0),
         'Ay İçi İşten Ayrılan': format_number(month_data['cikisToplam'], 0),
     }
