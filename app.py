@@ -516,7 +516,7 @@ def main():
     col11.metric("🧮 Kişi Başı Ort. Maaş (Net TL)", format_tl(cur), delta=format_delta_tl(diff))
 
     # ----- KPI KARTLARI (3. satır) -----
-    col12, col13, col14, col15, col16 = st.columns(5)  # 5 sütun oldu (ilk6ay kaldırıldı)
+    col12, col13, col14, col15, col16 = st.columns(5)  # col17 kaldırıldı
 
     col12.metric("🔄 Küm. Genel Turnover", format_percent(month_data['genelKumulatifTurnover']))
     col13.metric("🚪 Küm. Gönüllü Turnover", format_percent(month_data['genelKumulatifGonullu']))
@@ -776,6 +776,7 @@ def main():
     total_fm_tl = sum(d['fmTlMaliyet'] for d in month_data['companies'].values())
     total_izin_gun = sum(d['izinGun'] for d in month_data['companies'].values())
     total_izin_ucret = sum(d['izinUcret'] for d in month_data['companies'].values())
+    total_ilk6ay = sum(d['ilk6ayOrani'] for d in month_data['companies'].values()) / len(COMPANIES)
 
     total_row = {
         'Şirket': '⭐ TOPLAM',
