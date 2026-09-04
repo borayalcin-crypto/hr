@@ -703,25 +703,32 @@ def main():
         'Kümülatif Gönüllü Turnover': [data[m]['genelKumulatifGonullu'] for m in MONTHS]
     })
 
-    fig_trend = px.line(
-        trend_df,
-        x='Ay',
-        y=['Kümülatif Genel Turnover', 'Kümülatif Gönüllü Turnover'],
-        markers=True,
-        color_discrete_map={
-            'Kümülatif Genel Turnover': '#f59e0b',
-            'Kümülatif Gönüllü Turnover': '#ec4899'
-        },
-        labels={'value': 'Turnover Oranı (%)', 'variable': ''}
-    )
-    fig_trend.update_traces(
-        texttemplate='%{y:.2f}%',
-        textposition='top center'
-    )
+    fig_trend = go.Figure()
+    fig_trend.add_trace(go.Scatter(
+        x=trend_df['Ay'], y=trend_df['Kümülatif Genel Turnover'],
+        mode='lines+markers+text',
+        name='Kümülatif Genel Turnover',
+        line=dict(color='#f59e0b'),
+        marker=dict(size=8),
+        text=trend_df['Kümülatif Genel Turnover'].apply(format_percent),
+        textposition='top center',
+        hovertemplate='<b>%{x}</b><br>%{fullData.name}: %{text}<extra></extra>'
+    ))
+    fig_trend.add_trace(go.Scatter(
+        x=trend_df['Ay'], y=trend_df['Kümülatif Gönüllü Turnover'],
+        mode='lines+markers+text',
+        name='Kümülatif Gönüllü Turnover',
+        line=dict(color='#ec4899'),
+        marker=dict(size=8),
+        text=trend_df['Kümülatif Gönüllü Turnover'].apply(format_percent),
+        textposition='bottom center',
+        hovertemplate='<b>%{x}</b><br>%{fullData.name}: %{text}<extra></extra>'
+    ))
     fig_trend.update_layout(
         height=400,
         margin=dict(l=10, r=10, t=30, b=10),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        yaxis_title='Turnover Oranı (%)'
     )
     st.plotly_chart(fig_trend, use_container_width=True)
 
